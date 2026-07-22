@@ -469,17 +469,35 @@ settings = {
 }
 
 peak_df = build_peak_rows(edited_items, settings)
-peak_df["มูลค่า"] = peak_df["จำนวน"].astype(float) * peak_df["ราคาต่อหน่วย"].astype(float)
 
-# ===== แบ่งเฉลี่ย VAT จากใบขนจริง ให้แต่ละรายการ ตามจำนวนสินค้า (ต่อหน่วย) =====
+# ===== แบ่งเฉลี่ย "มูลค่าสินค้า" และ "VAT" จากยอดใบขนจริง ตามจำนวนสินค้า (ต่อหน่วย) =====
 customs_vat_amount = st.session_state.get("vat_amount", 0.0)
-total_quantity = pd.to_numeric(peak_df["จำนวน"], errors="coerce").fillna(0).sum()
+customs_base_vat = st.session_state.get("target_base_vat", 0.0)
+qty_numeric = pd.to_numeric(peak_df["จำนวน"], errors="coerce").fillna(0)
+total_quantity = qty_numeric.sum()
+
+if customs_base_vat > 0 and total_quantity > 0:
+    # ราคาต่อหน่วยเฉลี่ย = ฐาน VAT จากใบขน (VAT ÷ อัตราภาษี) หารด้วยจำนวนสินค้ารวมทั้งหมด
+    value_per_unit = customs_base_vat / total_quantity
+    peak_df["ราคาต่อหน่วย"] = round(value_per_unit, 4)
+    peak_df["มูลค่า"] = (qty_numeric * value_per_unit).round(2)
+
+    # เกลี่ยเศษปัดที่เหลือ ให้ผลรวม "มูลค่า" ตรงกับฐาน VAT ใบขนเป๊ะๆ โดยใส่ผลต่างไว้ที่แถวสุดท้าย
+    value_diff = round(customs_base_vat - peak_df["มูลค่า"].sum(), 2)
+    if len(peak_df) > 0 and value_diff != 0:
+        peak_df.loc[peak_df.index[-1], "มูลค่า"] += value_diff
+
+    value_metric_label = "มูลค่าสินค้า (ตรงกับฐาน VAT ใบขน)"
+else:
+    peak_df["มูลค่า"] = qty_numeric * peak_df["ราคาต่อหน่วย"].astype(float)
+    value_metric_label = "มูลค่าสินค้า (ยังไม่ผูกกับใบขน)"
+
 total_value = peak_df["มูลค่า"].sum()
 
 if customs_vat_amount > 0 and total_quantity > 0:
     # VAT ต่อหน่วย = ยอด VAT ใบขน หารด้วยจำนวนสินค้ารวมทั้งหมด
     vat_per_unit = customs_vat_amount / total_quantity
-    raw_vat_share = pd.to_numeric(peak_df["จำนวน"], errors="coerce").fillna(0) * vat_per_unit
+    raw_vat_share = qty_numeric * vat_per_unit
     peak_df["VAT (จากใบขน)"] = raw_vat_share.round(2)
 
     # เกลี่ยเศษปัดที่เหลือ ให้ผลรวมตรงกับยอด VAT ใบขนเป๊ะๆ โดยใส่ผลต่างไว้ที่แถวสุดท้าย
@@ -497,6 +515,8 @@ else:
     st.warning("⚠️ ยังไม่มียอด VAT จากใบขน ตัวเลขนี้เป็นค่าประมาณจากอัตราภาษีเท่านั้น กรุณาอัปโหลด/กรอกยอด VAT จากใบขนด้านบนก่อน เพื่อให้ยอดตรงกัน")
 
 
+
+
 summary_df = (
     peak_df.groupby(["อ้างอิงถึง", "สินค้า/บริการ"], as_index=False)
     .agg(จำนวน=("จำนวน", "sum"), มูลค่า=("มูลค่า", "sum"), VAT=("VAT (จากใบขน)", "sum"))
@@ -508,15 +528,23 @@ st.dataframe(peak_df, use_container_width=True)
 metric_cols = st.columns(4)
 metric_cols[0].metric("จำนวนแถว", f"{len(peak_df):,}")
 metric_cols[1].metric("รวมจำนวน", f"{pd.to_numeric(peak_df['จำนวน'], errors='coerce').sum():,.0f}")
-metric_cols[2].metric("มูลค่าสินค้า", f"{total_value:,.2f}")
+metric_cols[2].metric(value_metric_label, f"{total_value:,.2f}")
 metric_cols[3].metric(vat_metric_label, f"{vat_total_display:,.2f}")
+
+check_cols = st.columns(2)
+if customs_base_vat > 0:
+    value_diff_check = round(total_value - customs_base_vat, 2)
+    if value_diff_check == 0:
+        check_cols[0].success(f"✅ มูลค่าสินค้ารวมตรงกับฐาน VAT ใบขน ({customs_base_vat:,.2f} บาท)")
+    else:
+        check_cols[0].error(f"⚠️ มูลค่าสินค้ารวมยังต่างจากฐาน VAT ใบขนอยู่ {value_diff_check:,.2f} บาท")
 
 if customs_vat_amount > 0:
     vat_diff = round(vat_total_display - customs_vat_amount, 2)
     if vat_diff == 0:
-        st.success(f"✅ ยอด VAT รวมตรงกับใบขน ({customs_vat_amount:,.2f} บาท)")
+        check_cols[1].success(f"✅ ยอด VAT รวมตรงกับใบขน ({customs_vat_amount:,.2f} บาท)")
     else:
-        st.error(f"⚠️ ยอด VAT รวมยังต่างจากใบขนอยู่ {vat_diff:,.2f} บาท กรุณาตรวจสอบรายการสินค้า")
+        check_cols[1].error(f"⚠️ ยอด VAT รวมยังต่างจากใบขนอยู่ {vat_diff:,.2f} บาท กรุณาตรวจสอบรายการสินค้า")
 
 peak_export_df = peak_df[PEAK_COLUMNS]
 excel_bytes = to_excel_bytes({"PEAK Import": peak_export_df, "Summary": summary_df})
