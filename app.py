@@ -293,203 +293,31 @@ def to_excel_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
     output.seek(0)
     return output.getvalue()
 
+st.markdown(
+    """
+    <style>
+    html, body, [class*="css"] {
+        font-family: 'THSarabunPSK', 'Sarabun', sans-serif;
+    }
+
+    .stApp {
+        background-color: #F8FAFC;
+    }
+
+    section[data-testid="stSidebar"] {
+        background-color: #374151;
+    }
+
+    section[data-testid="stSidebar"] * {
+        color: white !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 st.set_page_config(page_title=APP_TITLE, page_icon="🧾", layout="wide")
-st.markdown("""
-<style>
-@font-face {
-    font-family: 'THSarabunPSK';
-    src: local('THSarabunPSK');
-}
-
-html, body, [class*="css"] {
-    font-family: 'THSarabunPSK', 'Sarabun', sans-serif;
-    background-color: #F8FAFC;
-}
-
-.main .block-container {
-    padding-top: 1.5rem;
-    padding-bottom: 2rem;
-}
-
-h1 {
-    font-size: 28px !important;
-    font-weight: 700 !important;
-    color: #1F2937 !important;
-}
-
-h2 {
-    font-size: 22px !important;
-    font-weight: 700 !important;
-    color: #374151 !important;
-}
-
-h3 {
-    font-size: 20px !important;
-    font-weight: 700 !important;
-    color: #475569 !important;
-}
-
-.stMetric {
-    background: white;
-    border: 1px solid #E5E7EB;
-    border-radius: 16px;
-    padding: 1rem;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-}
-
-.stDataFrame, .stTable {
-    background: white;
-    border-radius: 12px;
-    overflow: hidden;
-}
-
-section[data-testid="stSidebar"] {
-    background-color: #374151;
-}
-
-section[data-testid="stSidebar"] * {
-    color: white !important;
-}
-
-.stButton > button {
-    background-color: #0EA5E9;
-    color: white;
-    border-radius: 12px;
-    border: none;
-    padding: 0.6rem 1.2rem;
-    font-size: 16px;
-    font-weight: 600;
-}
-
-.stDownloadButton > button {
-    background-color: #10B981;
-    color: white;
-    border-radius: 12px;
-    padding: 0.8rem 1.5rem;
-    font-size: 16px;
-    font-weight: 700;
-}
-
-.vat-warning {
-    background: #FEF2F2;
-    border-left: 6px solid #EF4444;
-    padding: 1rem;
-    border-radius: 12px;
-    color: #7F1D1D;
-    font-size: 18px;
-    font-weight: 700;
-}
-
-.vat-success {
-    background: #ECFDF5;
-    border-left: 6px solid #10B981;
-    padding: 1rem;
-    border-radius: 12px;
-    color: #065F46;
-    font-size: 18px;
-    font-weight: 700;
-}
-</style>
-""", unsafe_allow_html=True
            
-st.markdown("""
-<style>
-@font-face {
-    font-family: 'THSarabunPSK';
-    src: local('THSarabunPSK');
-}
-
-html, body, [class*="css"] {
-    font-family: 'THSarabunPSK', 'Sarabun', sans-serif;
-    background-color: #F8FAFC;
-}
-
-.main .block-container {
-    padding-top: 1.5rem;
-    padding-bottom: 2rem;
-}
-
-h1 {
-    font-size: 28px !important;
-    font-weight: 700 !important;
-    color: #1F2937 !important;
-}
-
-h2 {
-    font-size: 22px !important;
-    font-weight: 700 !important;
-    color: #374151 !important;
-}
-
-h3 {
-    font-size: 20px !important;
-    font-weight: 700 !important;
-    color: #475569 !important;
-}
-
-.stMetric {
-    background: white;
-    border: 1px solid #E5E7EB;
-    border-radius: 16px;
-    padding: 1rem;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-}
-
-.stDataFrame, .stTable {
-    background: white;
-    border-radius: 12px;
-    overflow: hidden;
-}
-
-section[data-testid="stSidebar"] {
-    background-color: #374151;
-}
-
-section[data-testid="stSidebar"] * {
-    color: white !important;
-}
-
-.stButton > button {
-    background-color: #0EA5E9;
-    color: white;
-    border-radius: 12px;
-    border: none;
-    padding: 0.6rem 1.2rem;
-    font-size: 16px;
-    font-weight: 600;
-}
-
-.stDownloadButton > button {
-    background-color: #10B981;
-    color: white;
-    border-radius: 12px;
-    padding: 0.8rem 1.5rem;
-    font-size: 16px;
-    font-weight: 700;
-}
-
-.vat-warning {
-    background: #FEF2F2;
-    border-left: 6px solid #EF4444;
-    padding: 1rem;
-    border-radius: 12px;
-    color: #7F1D1D;
-    font-size: 18px;
-    font-weight: 700;
-}
-
-.vat-success {
-    background: #ECFDF5;
-    border-left: 6px solid #10B981;
-    padding: 1rem;
-    border-radius: 12px;
-    color: #065F46;
-    font-size: 18px;
-    font-weight: 700;
-}
-</style>
-""", unsafe_allow_html=True)
 st.markdown("""
 <div style="
     background: linear-gradient(135deg,#1F2937,#374151);
