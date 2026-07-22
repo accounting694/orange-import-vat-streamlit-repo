@@ -384,7 +384,7 @@ st.metric("ฐาน VAT", f"{base_vat:,.2f}")
 # เก็บไว้ใช้คำนวณยอดรวม
 st.session_state["target_base_vat"] = base_vat
 
-    st.success(f"อ่านใบขนสำเร็จ ({customs_method})")
+st.success(f"อ่านใบขนสำเร็จ ({customs_method})")
 
     # ===== ดึง VAT จากบรรทัดภาษีมูลค่าเพิ่ม =====
     vat_amount = 0.0
