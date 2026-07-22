@@ -353,8 +353,6 @@ customs_pdf = st.file_uploader(
     key="customs_pdf"
 )
 
-
-# เก็บไว้ใช้คำนวณยอดรวม
 if customs_pdf is not None:
 
     customs_text, customs_method = extract_pdf_text(customs_pdf)
@@ -374,9 +372,17 @@ if customs_pdf is not None:
                 vat_amount = float(matches[-1].replace(",", ""))
                 break
 
-    # ถ้า OCR อ่านไม่เจอ ให้ใช้ VAT จริงจากใบขน
+    # ถ้า OCR อ่านไม่เจอ ให้เตือนและให้ผู้ใช้กรอกยอด VAT เอง
     if vat_amount == 0.0:
-        vat_amount = 58672.00
+        st.warning("⚠️ อ่านยอด VAT จากใบขนไม่เจอ กรุณากรอกยอด VAT เอง")
+        vat_amount = st.number_input(
+            "กรอกยอด VAT จากใบขน (บาท)",
+            min_value=0.0,
+            value=0.0,
+            step=0.01,
+            format="%.2f",
+            key="manual_vat_amount",
+        )
 
     base_vat = round(vat_amount / 0.07, 2)
 
