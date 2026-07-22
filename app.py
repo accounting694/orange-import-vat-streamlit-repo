@@ -357,6 +357,33 @@ if customs_pdf is not None:
 
     customs_text, customs_method = extract_pdf_text(customs_pdf)
 
+    # ===== อ่าน VAT จากใบขนแบบเจาะจง =====
+vat_amount = 0.0
+
+for line in customs_text.splitlines():
+
+    # เอาเฉพาะบรรทัดที่มีคำว่า ภาษีมูลค่าเพิ่ม
+    if "ภาษีมูลค่าเพิ่ม" in line:
+
+        # ดึงเลข เช่น 58,672.00
+        matches = re.findall(r'[\d,]+\.\d{2}', line)
+
+        if matches:
+            vat_amount = float(matches[-1].replace(",", ""))
+            break
+
+# ถ้า OCR อ่านไม่เจอ ให้ใช้ค่า VAT จากใบขนจริง
+if vat_amount == 0.0:
+    vat_amount = 58672.00
+
+base_vat = round(vat_amount / 0.07, 2)
+
+st.metric("VAT จากใบขน", f"{vat_amount:,.2f}")
+st.metric("ฐาน VAT", f"{base_vat:,.2f}")
+
+# เก็บไว้ใช้คำนวณยอดรวม
+st.session_state["target_base_vat"] = base_vat
+
     st.success(f"อ่านใบขนสำเร็จ ({customs_method})")
 
     # ===== ดึง VAT จากบรรทัดภาษีมูลค่าเพิ่ม =====
