@@ -295,9 +295,213 @@ def to_excel_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
 
 
 st.set_page_config(page_title=APP_TITLE, page_icon="🧾", layout="wide")
-st.title(APP_TITLE)
-st.caption("อ่านใบรับสินค้า PDF หลายใบ แล้วสร้างไฟล์ Excel นำเข้า PEAK ตาม template จริง")
+st.markdown("""
+<style>
+@font-face {
+    font-family: 'THSarabunPSK';
+    src: local('THSarabunPSK');
+}
 
+html, body, [class*="css"] {
+    font-family: 'THSarabunPSK', 'Sarabun', sans-serif;
+    background-color: #F8FAFC;
+}
+
+.main .block-container {
+    padding-top: 1.5rem;
+    padding-bottom: 2rem;
+}
+
+h1 {
+    font-size: 28px !important;
+    font-weight: 700 !important;
+    color: #1F2937 !important;
+}
+
+h2 {
+    font-size: 22px !important;
+    font-weight: 700 !important;
+    color: #374151 !important;
+}
+
+h3 {
+    font-size: 20px !important;
+    font-weight: 700 !important;
+    color: #475569 !important;
+}
+
+.stMetric {
+    background: white;
+    border: 1px solid #E5E7EB;
+    border-radius: 16px;
+    padding: 1rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+.stDataFrame, .stTable {
+    background: white;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+section[data-testid="stSidebar"] {
+    background-color: #374151;
+}
+
+section[data-testid="stSidebar"] * {
+    color: white !important;
+}
+
+.stButton > button {
+    background-color: #0EA5E9;
+    color: white;
+    border-radius: 12px;
+    border: none;
+    padding: 0.6rem 1.2rem;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.stDownloadButton > button {
+    background-color: #10B981;
+    color: white;
+    border-radius: 12px;
+    padding: 0.8rem 1.5rem;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.vat-warning {
+    background: #FEF2F2;
+    border-left: 6px solid #EF4444;
+    padding: 1rem;
+    border-radius: 12px;
+    color: #7F1D1D;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.vat-success {
+    background: #ECFDF5;
+    border-left: 6px solid #10B981;
+    padding: 1rem;
+    border-radius: 12px;
+    color: #065F46;
+    font-size: 18px;
+    font-weight: 700;
+}
+</style>
+""", unsafe_allow_html=True)st.markdown("""
+<style>
+@font-face {
+    font-family: 'THSarabunPSK';
+    src: local('THSarabunPSK');
+}
+
+html, body, [class*="css"] {
+    font-family: 'THSarabunPSK', 'Sarabun', sans-serif;
+    background-color: #F8FAFC;
+}
+
+.main .block-container {
+    padding-top: 1.5rem;
+    padding-bottom: 2rem;
+}
+
+h1 {
+    font-size: 28px !important;
+    font-weight: 700 !important;
+    color: #1F2937 !important;
+}
+
+h2 {
+    font-size: 22px !important;
+    font-weight: 700 !important;
+    color: #374151 !important;
+}
+
+h3 {
+    font-size: 20px !important;
+    font-weight: 700 !important;
+    color: #475569 !important;
+}
+
+.stMetric {
+    background: white;
+    border: 1px solid #E5E7EB;
+    border-radius: 16px;
+    padding: 1rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+.stDataFrame, .stTable {
+    background: white;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+section[data-testid="stSidebar"] {
+    background-color: #374151;
+}
+
+section[data-testid="stSidebar"] * {
+    color: white !important;
+}
+
+.stButton > button {
+    background-color: #0EA5E9;
+    color: white;
+    border-radius: 12px;
+    border: none;
+    padding: 0.6rem 1.2rem;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.stDownloadButton > button {
+    background-color: #10B981;
+    color: white;
+    border-radius: 12px;
+    padding: 0.8rem 1.5rem;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.vat-warning {
+    background: #FEF2F2;
+    border-left: 6px solid #EF4444;
+    padding: 1rem;
+    border-radius: 12px;
+    color: #7F1D1D;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.vat-success {
+    background: #ECFDF5;
+    border-left: 6px solid #10B981;
+    padding: 1rem;
+    border-radius: 12px;
+    color: #065F46;
+    font-size: 18px;
+    font-weight: 700;
+}
+</style>
+""", unsafe_allow_html=True)
+st.markdown("""
+<div style="
+    background: linear-gradient(135deg,#1F2937,#374151);
+    padding: 1.5rem;
+    border-radius: 20px;
+    margin-bottom: 1.5rem;
+    color: white;
+">
+    <div style="font-size:32px;font-weight:700;">🧾 ORANGE IMPORT VAT</div>
+    <div style="font-size:18px;opacity:0.9;">
+        ระบบตรวจสอบ VAT นำเข้า • Smart Cost Allocation • Export PEAK
+    </div>
+</div>
+""", unsafe_allow_html=True)
 with st.sidebar:
     st.header("ข้อมูลเอกสาร PEAK")
     document_date = st.date_input("วันที่เอกสาร", value=date(2026, 5, 28))
@@ -320,7 +524,42 @@ customs_pdf = st.file_uploader(
 )
 
 if customs_pdf is not None:
-    st.success("อัปโหลดใบขนสำเร็จ")
+
+    customs_text, customs_method = extract_pdf_text(customs_pdf)
+
+    st.success(f"อ่านใบขนสำเร็จ ({customs_method})")
+
+    # ===== ดึง VAT จากบรรทัดภาษีมูลค่าเพิ่ม =====
+    vat_amount = 0.0
+
+    for line in customs_text.splitlines():
+
+        if "ภาษีมูลค่าเพิ่ม" in line or "VALUE ADDED TAX" in line.upper():
+
+            matches = re.findall(r'[\d,]+\.\d{2}', line)
+
+            if matches:
+                vat_amount = float(matches[-1].replace(",", ""))
+                break
+
+    base_vat = round(vat_amount / 0.07, 2)
+
+    # ===== หาเลขตู้ =====
+    containers = sorted(set(re.findall(r"\b[A-Z]{4}\d{7}\b", customs_text)))
+
+    col1, col2 = st.columns(2)
+
+    col1.metric("VAT 7%", f"{vat_amount:,.2f}")
+    col2.metric("ฐาน VAT", f"{base_vat:,.2f}")
+
+    if containers:
+        st.subheader("เลขตู้ที่พบ")
+        for c in containers:
+            st.write(f"🚚 {c}")
+
+    # เก็บไว้ใช้ตอน Export PEAK
+    st.session_state["target_base_vat"] = base_vat
+    st.session_state["vat_amount"] = vat_amount
 uploaded_pdfs = st.file_uploader(
     "อัปโหลด PDF ใบรับสินค้า เช่น 1386.pdf, 1388.pdf",
     type=["pdf"],
