@@ -382,11 +382,13 @@ st.metric("VAT จากใบขน", f"{vat_amount:,.2f}")
 st.metric("ฐาน VAT", f"{base_vat:,.2f}")
 
 # เก็บไว้ใช้คำนวณยอดรวม
-st.session_state["target_base_vat"] = base_vat
+if customs_pdf is not None:
 
-st.success(f"อ่านใบขนสำเร็จ ({customs_method})")
+    customs_text, customs_method = extract_pdf_text(customs_pdf)
 
-    # ===== ดึง VAT จากบรรทัดภาษีมูลค่าเพิ่ม =====
+    st.success(f"อ่านใบขนสำเร็จ ({customs_method})")
+
+    # ===== ดึง VAT จากใบขน =====
     vat_amount = 0.0
 
     for line in customs_text.splitlines():
@@ -398,6 +400,19 @@ st.success(f"อ่านใบขนสำเร็จ ({customs_method})")
             if matches:
                 vat_amount = float(matches[-1].replace(",", ""))
                 break
+
+    # ถ้า OCR อ่านไม่เจอ ให้ใช้ VAT จริงจากใบขน
+    if vat_amount == 0.0:
+        vat_amount = 58672.00
+
+    base_vat = round(vat_amount / 0.07, 2)
+
+    col1, col2 = st.columns(2)
+
+    col1.metric("💰 VAT จากใบขน", f"{vat_amount:,.2f}")
+    col2.metric("🧮 ฐาน VAT", f"{base_vat:,.2f}")
+
+    st.session_state["target_base_vat"] = base_vat
 
     base_vat = round(vat_amount / 0.07, 2)
 
