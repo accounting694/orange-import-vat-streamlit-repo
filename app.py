@@ -310,7 +310,17 @@ with st.sidebar:
     group_code = st.text_input("กลุ่มจัดประเภท", value="G004-00014")
     vat_rate = st.number_input("อัตราภาษี", min_value=0.0, max_value=1.0, value=VAT_RATE, step=0.01, format="%.2f")
     default_container = st.text_input("ตู้เริ่มต้น ถ้าอ่านไม่ได้", value="")
+st.markdown("---")
+st.header("📄 นำเข้าใบขน PDF")
 
+customs_pdf = st.file_uploader(
+    "เลือกไฟล์ใบขน PDF",
+    type=["pdf"],
+    key="customs_pdf"
+)
+
+if customs_pdf is not None:
+    st.success("อัปโหลดใบขนสำเร็จ")
 uploaded_pdfs = st.file_uploader(
     "อัปโหลด PDF ใบรับสินค้า เช่น 1386.pdf, 1388.pdf",
     type=["pdf"],
