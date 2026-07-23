@@ -1,4 +1,5 @@
 import io
+import math
 import re
 from datetime import date
 
@@ -184,6 +185,69 @@ def parse_customs_items(text: str) -> list[dict]:
             items.append({"name_en": name, "quantity": qty, "value": value, "vat": vat})
 
     return items
+
+
+def extract_vat_from_header(text: str) -> float:
+    """หายอด VAT จากตารางสรุปด้านบนของใบขน (อากรขาเข้า/ภาษีสรรพสามิต/.../ภาษีมูลค่าเพิ่ม/รวมทั้งสิ้น)
+    โดยหาก่อนถึงรายการสินค้ารายการแรก เพราะแถวอื่นในตารางนี้เป็น 0.00 หมด
+    เหลือแค่แถว "ภาษีมูลค่าเพิ่ม" กับ "รวมทั้งสิ้น" ที่มีค่าเท่ากัน (ไม่มีอากรขาเข้า/สรรพสามิตอื่น)
+    วิธีนี้ไม่พึ่งพาการอ่านตัวอักษรไทยจาก OCR เลย (ซึ่งมักอ่านผิดเพี้ยนกับ PDF สแกน)
+    """
+    # ตัดให้เหลือแค่ส่วนหัวก่อนถึงรายการสินค้ารายการแรก (บรรทัดที่มี USD ตามด้วยตัวเลข 3 ค่าขึ้นไป)
+    lines = text.split("\n")
+    header_end = len(lines)
+    for i, line in enumerate(lines):
+        if "USD" in line and "F=" not in line and "I=" not in line and "THB" not in line:
+            nums = re.findall(r"[\d][\d,.]*\d", line)
+            if len(nums) >= 3:
+                header_end = i
+                break
+
+    header_text = "\n".join(lines[:header_end])
+    candidates = re.findall(r"([\d]{1,3}(?:,\d{3})*\.\d{2})\s*[\(\[]?\s*0[.,]00\s*[\)\]]?", header_text)
+    values = [v for v in (_parse_customs_number(c) for c in candidates) if v and v > 0]
+    if values:
+        return max(values)
+    return 0.0
+
+
+def compute_price_tier(quantity: float, value: float):
+    """แบ่งราคาต่อหน่วยเป็น 2 ระดับ (ต่ำ/สูง ห่างกัน 1 สตางค์) แล้วกระจายจำนวนให้ผลรวมมูลค่าตรงเป๊ะ
+    เทคนิคเดียวกับเครื่องมือ 'เฉลี่ยราคาต่อชิ้น' ที่ใช้งานจริงอยู่แล้ว
+    """
+    if quantity <= 0:
+        return 0.0, 0.0, 0, 0
+    avg = value / quantity
+    low = math.floor(avg * 100) / 100
+    low = round(low, 2)
+    high = round(low + 0.01, 2)
+    qty_high = round((value - low * quantity) / 0.01)
+    qty_high = max(0, min(quantity, qty_high))
+    qty_low = quantity - qty_high
+    return low, high, qty_low, qty_high
+
+
+def allocate_tiered_rows(rows: list[dict], quantity: float, value: float, qty_key: str = "จำนวน", price_key: str = "ราคาต่อหน่วย") -> list[dict]:
+    """กระจายราคาต่อหน่วยแบบ 2 ระดับให้แถวสินค้าแต่ละแถว (อาจตัดแบ่ง 1 แถวเป็น 2 แถวถ้าคาบเกี่ยวรอยต่อของราคา)"""
+    low, high, qty_low, qty_high = compute_price_tier(quantity, value)
+    cum = 0.0
+    out_rows = []
+    for row in rows:
+        row_qty = float(row[qty_key])
+        low_portion = max(0.0, min(row_qty, qty_low - cum))
+        high_portion = row_qty - low_portion
+        cum += row_qty
+        if low_portion > 0:
+            r = dict(row)
+            r[qty_key] = round(low_portion, 6)
+            r[price_key] = low
+            out_rows.append(r)
+        if high_portion > 0:
+            r = dict(row)
+            r[qty_key] = round(high_portion, 6)
+            r[price_key] = high
+            out_rows.append(r)
+    return out_rows
 
 
 def extract_pdf_text(uploaded_file) -> tuple[str, str]:
@@ -460,14 +524,7 @@ if customs_pdf is not None:
     customs_items = parse_customs_items(customs_text)
     st.session_state["customs_items"] = customs_items
 
-    vat_amount = 0.0
-    base_vat = 0.0
-
     if customs_items:
-        # ยอดรวมจากผลรวมของทุกรายการที่แยกได้ (แม่นยำกว่า เพราะไม่พึ่งข้อความไทยที่ OCR มักอ่านผิด)
-        vat_amount = round(sum(it["vat"] for it in customs_items), 2)
-        base_vat = round(sum(it["value"] for it in customs_items), 2)
-
         with st.expander(f"📦 รายการสินค้าที่อ่านได้จากใบขน ({len(customs_items)} รายการ)"):
             customs_items_df = pd.DataFrame(customs_items)
             customs_items_df["ชื่อหมวดหมู่ (ไทย)"] = customs_items_df["name_en"].map(
@@ -485,33 +542,43 @@ if customs_pdf is not None:
                 ),
                 use_container_width=True,
             )
-    else:
-        # ถ้า parse รายการไม่ได้เลย ลองหาจากคำภาษาไทย/อังกฤษตรงๆ ในข้อความ (เผื่อเป็น PDF ที่มี text layer จริง)
+
+    # ===== หายอด VAT: ยึดจากตารางสรุปหัวใบขนเป็นอันดับแรก (แม่นยำสุด ไม่พึ่งข้อความไทยที่ OCR มักอ่านผิด) =====
+    auto_vat_amount = extract_vat_from_header(customs_text)
+
+    if auto_vat_amount == 0.0 and customs_items:
+        # สำรอง: ถ้าหาจากหัวตารางไม่เจอ ใช้ผลรวมรายการสินค้าแทน (อาจคลาดเคลื่อนเล็กน้อยจากการปัดเศษ)
+        auto_vat_amount = round(sum(it["vat"] for it in customs_items), 2)
+
+    if auto_vat_amount == 0.0:
+        # สำรองสุดท้าย: หาจากคำภาษาไทย/อังกฤษตรงๆ ในข้อความ (เผื่อเป็น PDF ที่มี text layer จริง)
         for line in customs_text.splitlines():
             if "ภาษีมูลค่าเพิ่ม" in line or "VALUE ADDED TAX" in line.upper():
                 matches = re.findall(r'[\d,]+\.\d{2}', line)
                 if matches:
-                    vat_amount = float(matches[-1].replace(",", ""))
+                    auto_vat_amount = float(matches[-1].replace(",", ""))
                     break
-        base_vat = round(vat_amount / vat_rate, 2) if vat_amount else 0.0
 
-    # ถ้ายังหายอดไม่ได้เลย ให้เตือนและให้ผู้ใช้กรอกยอด VAT เอง
-    if vat_amount == 0.0:
-        st.warning("⚠️ อ่านยอด VAT จากใบขนไม่เจอ กรุณากรอกยอด VAT เอง")
-        vat_amount = st.number_input(
-            "กรอกยอด VAT จากใบขน (บาท)",
-            min_value=0.0,
-            value=0.0,
-            step=0.01,
-            format="%.2f",
-            key="manual_vat_amount",
-        )
-        base_vat = round(vat_amount / vat_rate, 2) if vat_amount else 0.0
+    # ยอด VAT เป็นตัวเลขที่สำคัญที่สุดของทั้งระบบ (ทุกอย่างอ้างอิงจากตัวนี้)
+    # จึงให้ผู้ใช้ตรวจสอบ/แก้ไขได้เสมอ ไม่เชื่อระบบอัตโนมัติ 100% เพราะ OCR ใบขนสแกนมีโอกาสอ่านผิดจุดได้
+    st.markdown("**ยอด VAT รวมจากใบขน** (ตรวจสอบเลขให้ตรงกับช่อง \"ภาษีมูลค่าเพิ่ม\" ในตารางสรุปด้านบนสุดของใบขนเสมอ)")
+    vat_amount = st.number_input(
+        "ยอด VAT รวมจากใบขน (บาท) — แก้ไขได้ถ้าอ่านผิด",
+        min_value=0.0,
+        value=float(auto_vat_amount),
+        step=0.01,
+        format="%.2f",
+        key="confirmed_vat_amount",
+    )
+    if auto_vat_amount == 0.0:
+        st.warning("⚠️ ระบบอ่านยอด VAT อัตโนมัติไม่เจอ กรุณากรอกยอด VAT เอง (ดูจากช่อง \"ภาษีมูลค่าเพิ่ม\" ในใบขน)")
+
+    base_vat = round(vat_amount / vat_rate, 2) if vat_amount else 0.0
 
     col1, col2 = st.columns(2)
 
     col1.metric("💰 VAT จากใบขน", f"{vat_amount:,.2f}")
-    col2.metric("🧮 ฐาน VAT", f"{base_vat:,.2f}")
+    col2.metric("🧮 ฐาน VAT (VAT ÷ อัตราภาษี)", f"{base_vat:,.2f}")
 
     st.session_state["target_base_vat"] = base_vat
 
@@ -583,11 +650,9 @@ settings = {
     "container": default_container,
 }
 
-peak_df = build_peak_rows(edited_items, settings)
-qty_numeric = pd.to_numeric(peak_df["จำนวน"], errors="coerce").fillna(0)
-
-# ===== เฉลี่ย "มูลค่าสินค้า" และ "VAT" แยกตามหมวดหมู่สินค้า โดยจับคู่กับรายการในใบขน =====
 customs_items = st.session_state.get("customs_items", [])
+customs_vat_amount = st.session_state.get("vat_amount", 0.0)
+customs_base_vat = st.session_state.get("target_base_vat", 0.0)
 
 # สร้างตารางค้นหา: ชื่อหมวดไทย -> รายการในใบขน (รวมกรณีมีหลายรายการชื่อเดียวกัน)
 customs_by_th_name: dict[str, dict] = {}
@@ -595,44 +660,34 @@ for it in customs_items:
     th_name = CUSTOMS_NAME_TO_TH.get(it["name_en"])
     if not th_name:
         continue
-    agg = customs_by_th_name.setdefault(th_name, {"quantity": 0.0, "value": 0.0, "vat": 0.0})
+    agg = customs_by_th_name.setdefault(th_name, {"quantity": 0.0, "value": 0.0})
     agg["quantity"] += it["quantity"]
     agg["value"] += it["value"]
-    agg["vat"] += it["vat"]
 
-peak_df["มูลค่า"] = 0.0
-peak_df["VAT (จากใบขน)"] = 0.0
+# ยึดยอด "ฐาน VAT ที่ยืนยันแล้ว" เป็นตัวตั้งต้นเสมอ (anchor) แล้วปรับสเกลมูลค่าแต่ละหมวดให้รวมกันตรงเป๊ะกับยอดนี้
+# (มูลค่าต่อหมวดที่อ่านได้จากใบขนอาจคลาดเคลื่อนเล็กน้อยจากการปัดเศษ OCR แต่สัดส่วนระหว่างหมวดยังเชื่อถือได้)
+sum_customs_value = sum(g["value"] for g in customs_by_th_name.values())
+scale = (customs_base_vat / sum_customs_value) if (customs_base_vat > 0 and sum_customs_value > 0) else 1.0
+
+items_records = edited_items.to_dict("records")
 unmatched_categories = []
 category_check_rows = []
+allocated_records = []
 
-if customs_by_th_name:
-    for th_name, group_idx in peak_df.groupby("ชื่อสินค้า").groups.items():
-        group_idx = list(group_idx)
-        group_qty = qty_numeric.loc[group_idx]
-        group_total_qty = group_qty.sum()
+if customs_by_th_name and customs_base_vat > 0:
+    items_by_category: dict[str, list[dict]] = {}
+    for row in items_records:
+        items_by_category.setdefault(row.get("ชื่อสินค้า", ""), []).append(row)
 
+    for th_name, rows in items_by_category.items():
         customs_group = customs_by_th_name.get(th_name)
+        group_total_qty = sum(float(r["จำนวน"]) for r in rows)
 
         if customs_group and group_total_qty > 0:
-            # เฉลี่ยราคาต่อหน่วย/VAT ต่อหน่วย เฉพาะภายในหมวดหมู่เดียวกัน โดยยึดยอดจากใบขนของหมวดนั้น
-            value_per_unit = customs_group["value"] / customs_group["quantity"]
-            vat_per_unit = customs_group["vat"] / customs_group["quantity"]
-
-            row_value = (group_qty * value_per_unit).round(2)
-            row_vat = (group_qty * vat_per_unit).round(2)
-
-            peak_df.loc[group_idx, "ราคาต่อหน่วย"] = round(value_per_unit, 4)
-            peak_df.loc[group_idx, "มูลค่า"] = row_value
-            peak_df.loc[group_idx, "VAT (จากใบขน)"] = row_vat
-
-            # เกลี่ยเศษปัดให้ผลรวม "ของหมวดนี้เท่านั้น" ตรงกับเป้าที่คำนวณได้เป๊ะๆ (ไว้ที่แถวสุดท้ายของหมวด)
-            last_idx = group_idx[-1]
-            target_value = round(group_total_qty * value_per_unit, 2)
-            target_vat = round(group_total_qty * vat_per_unit, 2)
-            value_diff = round(target_value - peak_df.loc[group_idx, "มูลค่า"].sum(), 2)
-            vat_diff = round(target_vat - peak_df.loc[group_idx, "VAT (จากใบขน)"].sum(), 2)
-            peak_df.loc[last_idx, "มูลค่า"] += value_diff
-            peak_df.loc[last_idx, "VAT (จากใบขน)"] += vat_diff
+            adjusted_value = round(customs_group["value"] * scale, 2)
+            # แบ่งราคาต่อหน่วยเป็น 2 ระดับ (ห่างกัน 1 สตางค์) ให้ผลรวมของหมวดนี้ตรงกับ adjusted_value เป๊ะๆ
+            tiered_rows = allocate_tiered_rows(rows, customs_group["quantity"], adjusted_value)
+            allocated_records.extend(tiered_rows)
 
             qty_diff = round(group_total_qty - customs_group["quantity"], 2)
             category_check_rows.append({
@@ -643,22 +698,18 @@ if customs_by_th_name:
                 "สถานะ": "✅ ตรงกัน" if qty_diff == 0 else "⚠️ ไม่ตรงกัน",
             })
         else:
-            # ไม่พบหมวดนี้ในใบขน หรือยังไม่มีใบขน -> ใช้ราคาที่ตั้งไว้เดิม (default/master) ไปก่อน พร้อมตั้งค่าสถานะไว้เตือน
-            fallback_price = peak_df.loc[group_idx, "ราคาต่อหน่วย"].astype(float)
-            peak_df.loc[group_idx, "มูลค่า"] = (group_qty * fallback_price).round(2)
-            peak_df.loc[group_idx, "VAT (จากใบขน)"] = (peak_df.loc[group_idx, "มูลค่า"] * vat_rate).round(2)
-            if customs_items:
-                unmatched_categories.append(th_name)
+            # ไม่พบหมวดนี้ในใบขน -> ใช้ราคาที่ตั้งไว้เดิม (default/master) ไปก่อน พร้อมตั้งค่าสถานะไว้เตือน
+            allocated_records.extend(rows)
+            unmatched_categories.append(th_name)
 
-    value_metric_label = "มูลค่าสินค้า (ตรงกับใบขน รายหมวด)"
-    vat_metric_label = "VAT (ตรงกับใบขน รายหมวด)"
+    value_metric_label = "มูลค่าสินค้า (ยึดฐาน VAT ใบขนเป็นหลัก)"
+    vat_metric_label = "VAT (คำนวณจากมูลค่าที่ตรงใบขนแล้ว)"
 else:
-    # ยังไม่มีข้อมูลรายการจากใบขนเลย -> ประมาณการจากอัตราภาษีไปก่อน พร้อมเตือน
-    peak_df["มูลค่า"] = (qty_numeric * peak_df["ราคาต่อหน่วย"].astype(float)).round(2)
-    peak_df["VAT (จากใบขน)"] = (peak_df["มูลค่า"] * vat_rate).round(2)
+    # ยังไม่มียอด VAT ที่ยืนยัน หรือยังไม่มีรายการจากใบขนเลย -> ใช้ราคาที่ตั้งไว้เดิมทั้งหมด พร้อมเตือน
+    allocated_records = items_records
     value_metric_label = "มูลค่าสินค้า (ยังไม่ผูกกับใบขน)"
     vat_metric_label = "VAT โดยประมาณ (ยังไม่ผูกกับใบขน)"
-    st.warning("⚠️ ยังไม่มีข้อมูลรายการจากใบขน ตัวเลขนี้เป็นค่าประมาณจากอัตราภาษีเท่านั้น กรุณาอัปโหลดใบขน PDF ด้านบนก่อน เพื่อให้ยอดตรงกัน")
+    st.warning("⚠️ ยังไม่มียอด VAT ที่ยืนยันจากใบขน ตัวเลขนี้เป็นค่าประมาณการเท่านั้น กรุณาอัปโหลด/ยืนยันยอด VAT จากใบขนด้านบนก่อน เพื่อให้ยอดตรงกัน")
 
 if unmatched_categories:
     st.warning(
@@ -666,10 +717,16 @@ if unmatched_categories:
         + ", ".join(sorted(set(unmatched_categories)))
     )
 
+allocated_items_df = pd.DataFrame(allocated_records) if allocated_records else edited_items
+peak_df = build_peak_rows(allocated_items_df, settings)
+
+qty_numeric = pd.to_numeric(peak_df["จำนวน"], errors="coerce").fillna(0)
+price_numeric = pd.to_numeric(peak_df["ราคาต่อหน่วย"], errors="coerce").fillna(0)
+peak_df["มูลค่า"] = (qty_numeric * price_numeric).round(2)
+peak_df["VAT (จากใบขน)"] = (peak_df["มูลค่า"] * vat_rate).round(2)
+
 total_value = peak_df["มูลค่า"].sum()
 vat_total_display = peak_df["VAT (จากใบขน)"].sum()
-customs_vat_amount = st.session_state.get("vat_amount", 0.0)
-customs_base_vat = st.session_state.get("target_base_vat", 0.0)
 
 summary_df = (
     peak_df.groupby(["อ้างอิงถึง", "สินค้า/บริการ"], as_index=False)
@@ -692,14 +749,14 @@ metric_cols[3].metric(vat_metric_label, f"{vat_total_display:,.2f}")
 check_cols = st.columns(2)
 if customs_base_vat > 0:
     value_diff_check = round(total_value - customs_base_vat, 2)
-    if value_diff_check == 0:
+    if abs(value_diff_check) <= 0.05:
         check_cols[0].success(f"✅ มูลค่าสินค้ารวมตรงกับฐาน VAT ใบขน ({customs_base_vat:,.2f} บาท)")
     else:
         check_cols[0].error(f"⚠️ มูลค่าสินค้ารวมยังต่างจากฐาน VAT ใบขนอยู่ {value_diff_check:,.2f} บาท")
 
 if customs_vat_amount > 0:
     vat_diff = round(vat_total_display - customs_vat_amount, 2)
-    if vat_diff == 0:
+    if abs(vat_diff) <= 0.05:
         check_cols[1].success(f"✅ ยอด VAT รวมตรงกับใบขน ({customs_vat_amount:,.2f} บาท)")
     else:
         check_cols[1].error(f"⚠️ ยอด VAT รวมยังต่างจากใบขนอยู่ {vat_diff:,.2f} บาท กรุณาตรวจสอบรายการสินค้า")
