@@ -54,6 +54,16 @@ DEFAULT_PRODUCT_PRICES = {
     "KR": 204.69,
 }
 
+# แม็ปชื่อสินค้าภาษาอังกฤษที่อ่านได้จากใบขน (customs) ไปเป็นชื่อหมวดหมู่ภาษาไทยที่ระบบใช้อยู่แล้ว
+CUSTOMS_NAME_TO_TH = {
+    "DRESSING TABLE": "โต๊ะเครื่องแป้ง",
+    "WOODEN CUPBOARD": "ตู้ไม้",
+    "TV CABINET": "ตู้วางทีวี",
+    "BEDSIDE CABINET": "ตู้วางข้างเตียง",
+    "SHELF": "ชั้นวางของ",
+    "CURTAIN RAIL": "รางผ้าม่าน",
+}
+
 
 def clean_text(text: str) -> str:
     text = text.replace("\x00", " ")
@@ -87,6 +97,93 @@ def default_price(product_code: str) -> float:
         if family.startswith(prefix):
             return price
     return 0.0
+
+
+def _parse_customs_number(raw: str):
+    """แปลงข้อความตัวเลขจาก OCR ที่อาจสลับ , กับ . ให้เป็น float โดยยึดตัวคั่นตัวสุดท้ายเป็นจุดทศนิยม"""
+    raw = raw.strip().rstrip(".,")
+    only = re.sub(r"[^,.\d]", "", raw)
+    if not only:
+        return None
+    parts = re.split(r"[,.]", only)
+    if len(parts) < 2:
+        try:
+            return float(parts[0])
+        except (ValueError, IndexError):
+            return None
+    dec = parts[-1]
+    intp = "".join(parts[:-1])
+    try:
+        return float(f"{intp}.{dec}")
+    except ValueError:
+        return None
+
+
+def parse_customs_items(text: str) -> list[dict]:
+    """แยกแต่ละรายการสินค้าที่นำเข้าจากข้อความใบขน (OCR) ออกเป็น
+    ชื่อสินค้า (อังกฤษ), จำนวน (C62), มูลค่า (ฐานภาษีมูลค่าเพิ่ม), และ VAT ของรายการนั้นๆ
+    """
+    lines = text.split("\n")
+    items = []
+
+    for i, line in enumerate(lines):
+        # แถวแรกของแต่ละรายการ มีรูปแบบ "USD <ราคาต่างประเทศ> 0.00 0.00 0.00 <มูลค่าบาท>"
+        # ตัดแถวย่อยที่เป็นหมายเหตุแปลงสกุลเงิน (มี F= / I= / THB) ออก เพราะไม่ใช่แถวหลักของรายการ
+        if "USD" not in line or "F=" in line or "I=" in line or "THB" in line:
+            continue
+
+        nums_raw = re.findall(r"[\d][\d,.]*\d", line)
+        if len(nums_raw) < 3:
+            continue
+
+        value = _parse_customs_number(nums_raw[-1])
+        if not value or value < 1000:
+            continue
+
+        vat = None
+        qty = None
+        name = None
+        window_end = min(i + 14, len(lines))
+
+        for j in range(i, window_end):
+            l2 = lines[j]
+
+            # หายอด VAT: อยู่ในแถวที่มีค่ามูลค่าเดิมปรากฏซ้ำอีกครั้ง (คอลัมน์ท้ายแถวนั้นคือ VAT)
+            if vat is None and j != i:
+                n2 = re.findall(r"[\d][\d,.]*\d", l2)
+                parsed2 = [p for p in (_parse_customs_number(x) for x in n2) if p is not None]
+                if len(parsed2) >= 2 and any(abs(p - value) < 0.5 for p in parsed2):
+                    vat = parsed2[-1]
+
+            # หาจำนวนสินค้า (หน่วยนับ C62)
+            if qty is None:
+                m = re.search(r"([\d][\d,.]*\d)\s*C62", l2)
+                if m:
+                    q = _parse_customs_number(m.group(1))
+                    if q and q < 5000:
+                        qty = q
+
+            # หาชื่อสินค้าภาษาอังกฤษ (บรรทัดตัวพิมพ์ใหญ่ล้วน หรือท้ายบรรทัดที่ปนกับหมายเหตุอื่น)
+            if name is None:
+                l3 = l2.strip()
+                if re.fullmatch(r"[A-Z][A-Z\s]{2,30}", l3) and l3 not in ("NO BRAND", "CN", "ORIGIN CRITERIA"):
+                    name = l3
+                else:
+                    tail = re.search(r"([A-Z]{3,}(?:\s[A-Z]{2,})*)\s*$", l3)
+                    if tail and tail.group(1) not in ("NO BRAND", "CN") and len(tail.group(1)) > 4:
+                        name = tail.group(1)
+
+            if vat is not None and qty is not None and name is not None:
+                break
+
+        if name:
+            # ตัดตัวอักษรเดี่ยวหลุดหน้าชื่อ ที่มักเป็น noise จาก OCR (เช่น "E TV CABINET" -> "TV CABINET")
+            name = re.sub(r"^[A-Z]\s+(?=[A-Z]{2,})", "", name).strip()
+
+        if vat and qty and name:
+            items.append({"name_en": name, "quantity": qty, "value": value, "vat": vat})
+
+    return items
 
 
 def extract_pdf_text(uploaded_file) -> tuple[str, str]:
@@ -359,20 +456,46 @@ if customs_pdf is not None:
 
     st.success(f"อ่านใบขนสำเร็จ ({customs_method})")
 
-    # ===== ดึง VAT จากใบขน =====
+    # ===== แยกรายการสินค้าแต่ละหมวดจากใบขน (ชื่อ/จำนวน/มูลค่า/VAT) =====
+    customs_items = parse_customs_items(customs_text)
+    st.session_state["customs_items"] = customs_items
+
     vat_amount = 0.0
+    base_vat = 0.0
 
-    for line in customs_text.splitlines():
+    if customs_items:
+        # ยอดรวมจากผลรวมของทุกรายการที่แยกได้ (แม่นยำกว่า เพราะไม่พึ่งข้อความไทยที่ OCR มักอ่านผิด)
+        vat_amount = round(sum(it["vat"] for it in customs_items), 2)
+        base_vat = round(sum(it["value"] for it in customs_items), 2)
 
-        if "ภาษีมูลค่าเพิ่ม" in line or "VALUE ADDED TAX" in line.upper():
+        with st.expander(f"📦 รายการสินค้าที่อ่านได้จากใบขน ({len(customs_items)} รายการ)"):
+            customs_items_df = pd.DataFrame(customs_items)
+            customs_items_df["ชื่อหมวดหมู่ (ไทย)"] = customs_items_df["name_en"].map(
+                lambda n: CUSTOMS_NAME_TO_TH.get(n, "❓ ไม่พบหมวดที่ตรงกันในระบบ")
+            )
+            customs_items_df["ราคาต่อหน่วยเฉลี่ย"] = (customs_items_df["value"] / customs_items_df["quantity"]).round(2)
+            st.dataframe(
+                customs_items_df.rename(
+                    columns={
+                        "name_en": "ชื่อสินค้า (อังกฤษ)",
+                        "quantity": "จำนวน",
+                        "value": "มูลค่า (ฐาน VAT)",
+                        "vat": "VAT",
+                    }
+                ),
+                use_container_width=True,
+            )
+    else:
+        # ถ้า parse รายการไม่ได้เลย ลองหาจากคำภาษาไทย/อังกฤษตรงๆ ในข้อความ (เผื่อเป็น PDF ที่มี text layer จริง)
+        for line in customs_text.splitlines():
+            if "ภาษีมูลค่าเพิ่ม" in line or "VALUE ADDED TAX" in line.upper():
+                matches = re.findall(r'[\d,]+\.\d{2}', line)
+                if matches:
+                    vat_amount = float(matches[-1].replace(",", ""))
+                    break
+        base_vat = round(vat_amount / vat_rate, 2) if vat_amount else 0.0
 
-            matches = re.findall(r'[\d,]+\.\d{2}', line)
-
-            if matches:
-                vat_amount = float(matches[-1].replace(",", ""))
-                break
-
-    # ถ้า OCR อ่านไม่เจอ ให้เตือนและให้ผู้ใช้กรอกยอด VAT เอง
+    # ถ้ายังหายอดไม่ได้เลย ให้เตือนและให้ผู้ใช้กรอกยอด VAT เอง
     if vat_amount == 0.0:
         st.warning("⚠️ อ่านยอด VAT จากใบขนไม่เจอ กรุณากรอกยอด VAT เอง")
         vat_amount = st.number_input(
@@ -383,8 +506,7 @@ if customs_pdf is not None:
             format="%.2f",
             key="manual_vat_amount",
         )
-
-    base_vat = round(vat_amount / 0.07, 2)
+        base_vat = round(vat_amount / vat_rate, 2) if vat_amount else 0.0
 
     col1, col2 = st.columns(2)
 
@@ -393,15 +515,8 @@ if customs_pdf is not None:
 
     st.session_state["target_base_vat"] = base_vat
 
-    base_vat = round(vat_amount / 0.07, 2)
-
     # ===== หาเลขตู้ =====
     containers = sorted(set(re.findall(r"\b[A-Z]{4}\d{7}\b", customs_text)))
-
-    col1, col2 = st.columns(2)
-
-    col1.metric("VAT 7%", f"{vat_amount:,.2f}")
-    col2.metric("ฐาน VAT", f"{base_vat:,.2f}")
 
     if containers:
         st.subheader("เลขตู้ที่พบ")
@@ -469,58 +584,101 @@ settings = {
 }
 
 peak_df = build_peak_rows(edited_items, settings)
-
-# ===== แบ่งเฉลี่ย "มูลค่าสินค้า" และ "VAT" จากยอดใบขนจริง ตามจำนวนสินค้า (ต่อหน่วย) =====
-customs_vat_amount = st.session_state.get("vat_amount", 0.0)
-customs_base_vat = st.session_state.get("target_base_vat", 0.0)
 qty_numeric = pd.to_numeric(peak_df["จำนวน"], errors="coerce").fillna(0)
-total_quantity = qty_numeric.sum()
 
-if customs_base_vat > 0 and total_quantity > 0:
-    # ราคาต่อหน่วยเฉลี่ย = ฐาน VAT จากใบขน (VAT ÷ อัตราภาษี) หารด้วยจำนวนสินค้ารวมทั้งหมด
-    value_per_unit = customs_base_vat / total_quantity
-    peak_df["ราคาต่อหน่วย"] = round(value_per_unit, 4)
-    peak_df["มูลค่า"] = (qty_numeric * value_per_unit).round(2)
+# ===== เฉลี่ย "มูลค่าสินค้า" และ "VAT" แยกตามหมวดหมู่สินค้า โดยจับคู่กับรายการในใบขน =====
+customs_items = st.session_state.get("customs_items", [])
 
-    # เกลี่ยเศษปัดที่เหลือ ให้ผลรวม "มูลค่า" ตรงกับฐาน VAT ใบขนเป๊ะๆ โดยใส่ผลต่างไว้ที่แถวสุดท้าย
-    value_diff = round(customs_base_vat - peak_df["มูลค่า"].sum(), 2)
-    if len(peak_df) > 0 and value_diff != 0:
-        peak_df.loc[peak_df.index[-1], "มูลค่า"] += value_diff
+# สร้างตารางค้นหา: ชื่อหมวดไทย -> รายการในใบขน (รวมกรณีมีหลายรายการชื่อเดียวกัน)
+customs_by_th_name: dict[str, dict] = {}
+for it in customs_items:
+    th_name = CUSTOMS_NAME_TO_TH.get(it["name_en"])
+    if not th_name:
+        continue
+    agg = customs_by_th_name.setdefault(th_name, {"quantity": 0.0, "value": 0.0, "vat": 0.0})
+    agg["quantity"] += it["quantity"]
+    agg["value"] += it["value"]
+    agg["vat"] += it["vat"]
 
-    value_metric_label = "มูลค่าสินค้า (ตรงกับฐาน VAT ใบขน)"
+peak_df["มูลค่า"] = 0.0
+peak_df["VAT (จากใบขน)"] = 0.0
+unmatched_categories = []
+category_check_rows = []
+
+if customs_by_th_name:
+    for th_name, group_idx in peak_df.groupby("ชื่อสินค้า").groups.items():
+        group_idx = list(group_idx)
+        group_qty = qty_numeric.loc[group_idx]
+        group_total_qty = group_qty.sum()
+
+        customs_group = customs_by_th_name.get(th_name)
+
+        if customs_group and group_total_qty > 0:
+            # เฉลี่ยราคาต่อหน่วย/VAT ต่อหน่วย เฉพาะภายในหมวดหมู่เดียวกัน โดยยึดยอดจากใบขนของหมวดนั้น
+            value_per_unit = customs_group["value"] / customs_group["quantity"]
+            vat_per_unit = customs_group["vat"] / customs_group["quantity"]
+
+            row_value = (group_qty * value_per_unit).round(2)
+            row_vat = (group_qty * vat_per_unit).round(2)
+
+            peak_df.loc[group_idx, "ราคาต่อหน่วย"] = round(value_per_unit, 4)
+            peak_df.loc[group_idx, "มูลค่า"] = row_value
+            peak_df.loc[group_idx, "VAT (จากใบขน)"] = row_vat
+
+            # เกลี่ยเศษปัดให้ผลรวม "ของหมวดนี้เท่านั้น" ตรงกับเป้าที่คำนวณได้เป๊ะๆ (ไว้ที่แถวสุดท้ายของหมวด)
+            last_idx = group_idx[-1]
+            target_value = round(group_total_qty * value_per_unit, 2)
+            target_vat = round(group_total_qty * vat_per_unit, 2)
+            value_diff = round(target_value - peak_df.loc[group_idx, "มูลค่า"].sum(), 2)
+            vat_diff = round(target_vat - peak_df.loc[group_idx, "VAT (จากใบขน)"].sum(), 2)
+            peak_df.loc[last_idx, "มูลค่า"] += value_diff
+            peak_df.loc[last_idx, "VAT (จากใบขน)"] += vat_diff
+
+            qty_diff = round(group_total_qty - customs_group["quantity"], 2)
+            category_check_rows.append({
+                "หมวดสินค้า": th_name,
+                "จำนวนในใบรับ": group_total_qty,
+                "จำนวนในใบขน": customs_group["quantity"],
+                "ผลต่างจำนวน": qty_diff,
+                "สถานะ": "✅ ตรงกัน" if qty_diff == 0 else "⚠️ ไม่ตรงกัน",
+            })
+        else:
+            # ไม่พบหมวดนี้ในใบขน หรือยังไม่มีใบขน -> ใช้ราคาที่ตั้งไว้เดิม (default/master) ไปก่อน พร้อมตั้งค่าสถานะไว้เตือน
+            fallback_price = peak_df.loc[group_idx, "ราคาต่อหน่วย"].astype(float)
+            peak_df.loc[group_idx, "มูลค่า"] = (group_qty * fallback_price).round(2)
+            peak_df.loc[group_idx, "VAT (จากใบขน)"] = (peak_df.loc[group_idx, "มูลค่า"] * vat_rate).round(2)
+            if customs_items:
+                unmatched_categories.append(th_name)
+
+    value_metric_label = "มูลค่าสินค้า (ตรงกับใบขน รายหมวด)"
+    vat_metric_label = "VAT (ตรงกับใบขน รายหมวด)"
 else:
-    peak_df["มูลค่า"] = qty_numeric * peak_df["ราคาต่อหน่วย"].astype(float)
+    # ยังไม่มีข้อมูลรายการจากใบขนเลย -> ประมาณการจากอัตราภาษีไปก่อน พร้อมเตือน
+    peak_df["มูลค่า"] = (qty_numeric * peak_df["ราคาต่อหน่วย"].astype(float)).round(2)
+    peak_df["VAT (จากใบขน)"] = (peak_df["มูลค่า"] * vat_rate).round(2)
     value_metric_label = "มูลค่าสินค้า (ยังไม่ผูกกับใบขน)"
+    vat_metric_label = "VAT โดยประมาณ (ยังไม่ผูกกับใบขน)"
+    st.warning("⚠️ ยังไม่มีข้อมูลรายการจากใบขน ตัวเลขนี้เป็นค่าประมาณจากอัตราภาษีเท่านั้น กรุณาอัปโหลดใบขน PDF ด้านบนก่อน เพื่อให้ยอดตรงกัน")
+
+if unmatched_categories:
+    st.warning(
+        "⚠️ ไม่พบหมวดสินค้าต่อไปนี้ในใบขน จึงใช้ราคาประมาณการแทน: "
+        + ", ".join(sorted(set(unmatched_categories)))
+    )
 
 total_value = peak_df["มูลค่า"].sum()
-
-if customs_vat_amount > 0 and total_quantity > 0:
-    # VAT ต่อหน่วย = ยอด VAT ใบขน หารด้วยจำนวนสินค้ารวมทั้งหมด
-    vat_per_unit = customs_vat_amount / total_quantity
-    raw_vat_share = qty_numeric * vat_per_unit
-    peak_df["VAT (จากใบขน)"] = raw_vat_share.round(2)
-
-    # เกลี่ยเศษปัดที่เหลือ ให้ผลรวมตรงกับยอด VAT ใบขนเป๊ะๆ โดยใส่ผลต่างไว้ที่แถวสุดท้าย
-    rounding_diff = round(customs_vat_amount - peak_df["VAT (จากใบขน)"].sum(), 2)
-    if len(peak_df) > 0 and rounding_diff != 0:
-        peak_df.loc[peak_df.index[-1], "VAT (จากใบขน)"] += rounding_diff
-
-    vat_total_display = peak_df["VAT (จากใบขน)"].sum()
-    vat_metric_label = "VAT (ตรงกับใบขน)"
-else:
-    # ยังไม่มียอด VAT จากใบขน (ยังไม่ได้อัปโหลด/อ่านไม่เจอ) ให้ประมาณจาก vat_rate ไปก่อน พร้อมเตือน
-    peak_df["VAT (จากใบขน)"] = (peak_df["มูลค่า"] * vat_rate).round(2)
-    vat_total_display = peak_df["VAT (จากใบขน)"].sum()
-    vat_metric_label = "VAT โดยประมาณ (ยังไม่ผูกกับใบขน)"
-    st.warning("⚠️ ยังไม่มียอด VAT จากใบขน ตัวเลขนี้เป็นค่าประมาณจากอัตราภาษีเท่านั้น กรุณาอัปโหลด/กรอกยอด VAT จากใบขนด้านบนก่อน เพื่อให้ยอดตรงกัน")
-
-
-
+vat_total_display = peak_df["VAT (จากใบขน)"].sum()
+customs_vat_amount = st.session_state.get("vat_amount", 0.0)
+customs_base_vat = st.session_state.get("target_base_vat", 0.0)
 
 summary_df = (
     peak_df.groupby(["อ้างอิงถึง", "สินค้า/บริการ"], as_index=False)
     .agg(จำนวน=("จำนวน", "sum"), มูลค่า=("มูลค่า", "sum"), VAT=("VAT (จากใบขน)", "sum"))
 )
+
+if category_check_rows:
+    st.subheader("ตรวจสอบจำนวนสินค้าต่อหมวด (ใบรับ vs ใบขน)")
+    st.dataframe(pd.DataFrame(category_check_rows), use_container_width=True)
 
 st.subheader("Preview ไฟล์นำเข้า PEAK")
 st.dataframe(peak_df, use_container_width=True)
