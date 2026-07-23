@@ -521,27 +521,51 @@ if customs_pdf is not None:
     st.success(f"อ่านใบขนสำเร็จ ({customs_method})")
 
     # ===== แยกรายการสินค้าแต่ละหมวดจากใบขน (ชื่อ/จำนวน/มูลค่า/VAT) =====
-    customs_items = parse_customs_items(customs_text)
-    st.session_state["customs_items"] = customs_items
+    auto_customs_items = parse_customs_items(customs_text)
 
-    if customs_items:
-        with st.expander(f"📦 รายการสินค้าที่อ่านได้จากใบขน ({len(customs_items)} รายการ)"):
-            customs_items_df = pd.DataFrame(customs_items)
-            customs_items_df["ชื่อหมวดหมู่ (ไทย)"] = customs_items_df["name_en"].map(
-                lambda n: CUSTOMS_NAME_TO_TH.get(n, "❓ ไม่พบหมวดที่ตรงกันในระบบ")
-            )
-            customs_items_df["ราคาต่อหน่วยเฉลี่ย"] = (customs_items_df["value"] / customs_items_df["quantity"]).round(2)
-            st.dataframe(
-                customs_items_df.rename(
-                    columns={
-                        "name_en": "ชื่อสินค้า (อังกฤษ)",
-                        "quantity": "จำนวน",
-                        "value": "มูลค่า (ฐาน VAT)",
-                        "vat": "VAT",
-                    }
-                ),
-                use_container_width=True,
-            )
+    st.markdown(f"**รายการสินค้าที่อ่านได้จากใบขน** (พบอัตโนมัติ {len(auto_customs_items)} รายการ — ถ้าอ่านไม่ครบ/ผิด แก้ไขหรือเพิ่มแถวเองในตารางด้านล่างได้เลย)")
+
+    customs_items_df_source = pd.DataFrame(auto_customs_items) if auto_customs_items else pd.DataFrame(
+        columns=["name_en", "quantity", "value", "vat"]
+    )
+    if not customs_items_df_source.empty:
+        customs_items_df_source["หมวดหมู่ (ไทย)"] = customs_items_df_source["name_en"].apply(
+            lambda n: CUSTOMS_NAME_TO_TH.get(n, "")
+        )
+    else:
+        customs_items_df_source["หมวดหมู่ (ไทย)"] = []
+
+    customs_items_df_source = customs_items_df_source.rename(
+        columns={"name_en": "ชื่อสินค้า (อังกฤษ)", "quantity": "จำนวน", "value": "มูลค่า (ฐาน VAT)", "vat": "VAT"}
+    )[["หมวดหมู่ (ไทย)", "ชื่อสินค้า (อังกฤษ)", "จำนวน", "มูลค่า (ฐาน VAT)", "VAT"]]
+
+    edited_customs_items_df = st.data_editor(
+        customs_items_df_source,
+        use_container_width=True,
+        num_rows="dynamic",
+        column_config={
+            "หมวดหมู่ (ไทย)": st.column_config.SelectboxColumn(options=sorted(set(CUSTOMS_NAME_TO_TH.values()))),
+            "จำนวน": st.column_config.NumberColumn(format="%.2f", min_value=0.0),
+            "มูลค่า (ฐาน VAT)": st.column_config.NumberColumn(format="%.2f", min_value=0.0),
+            "VAT": st.column_config.NumberColumn(format="%.2f", min_value=0.0),
+        },
+        key="customs_items_editor",
+    )
+
+    # แปลงกลับเป็นรูปแบบที่ใช้ในการคำนวณ โดยยึด "หมวดหมู่ (ไทย)" ที่แก้ไขแล้วเป็นหลัก
+    customs_items = []
+    for _, r in edited_customs_items_df.iterrows():
+        th_name = r.get("หมวดหมู่ (ไทย)") or CUSTOMS_NAME_TO_TH.get(r.get("ชื่อสินค้า (อังกฤษ)", ""), "")
+        if not th_name or pd.isna(r.get("จำนวน")) or float(r.get("จำนวน", 0)) <= 0:
+            continue
+        customs_items.append({
+            "name_en": r.get("ชื่อสินค้า (อังกฤษ)", ""),
+            "name_th_override": th_name,
+            "quantity": float(r.get("จำนวน", 0)),
+            "value": float(r.get("มูลค่า (ฐาน VAT)", 0)),
+            "vat": float(r.get("VAT", 0)),
+        })
+    st.session_state["customs_items"] = customs_items
 
     # ===== หายอด VAT: ยึดจากตารางสรุปหัวใบขนเป็นอันดับแรก (แม่นยำสุด ไม่พึ่งข้อความไทยที่ OCR มักอ่านผิด) =====
     auto_vat_amount = extract_vat_from_header(customs_text)
@@ -657,7 +681,7 @@ customs_base_vat = st.session_state.get("target_base_vat", 0.0)
 # สร้างตารางค้นหา: ชื่อหมวดไทย -> รายการในใบขน (รวมกรณีมีหลายรายการชื่อเดียวกัน)
 customs_by_th_name: dict[str, dict] = {}
 for it in customs_items:
-    th_name = CUSTOMS_NAME_TO_TH.get(it["name_en"])
+    th_name = it.get("name_th_override") or CUSTOMS_NAME_TO_TH.get(it["name_en"])
     if not th_name:
         continue
     agg = customs_by_th_name.setdefault(th_name, {"quantity": 0.0, "value": 0.0})
