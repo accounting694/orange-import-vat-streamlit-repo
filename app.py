@@ -56,15 +56,42 @@ DEFAULT_PRODUCT_PRICES = {
     "KR": 204.69,
 }
 
-# แม็ปชื่อสินค้าภาษาอังกฤษที่อ่านได้จากใบขน (customs) ไปเป็นชื่อหมวดหมู่ภาษาไทยที่ระบบใช้อยู่แล้ว
-CUSTOMS_NAME_TO_TH = {
-    "DRESSING TABLE": "โต๊ะเครื่องแป้ง",
-    "WOODEN CUPBOARD": "ตู้ไม้",
-    "TV CABINET": "ตู้วางทีวี",
-    "BEDSIDE CABINET": "ตู้วางข้างเตียง",
-    "SHELF": "ชั้นวางของ",
-    "CURTAIN RAIL": "รางผ้าม่าน",
+# คำสำคัญภาษาอังกฤษที่อาจพบในใบขน สำหรับแต่ละหมวดหมู่สินค้าภาษาไทยที่ระบบรู้จัก
+# ใช้การจับคู่แบบ "มีคำสำคัญอยู่ในชื่อ" (ไม่ต้องตรงเป๊ะทั้งคำ) เพื่อครอบคลุมคำพ้องความหมายที่ยังไม่เคยเจอมาก่อน
+CUSTOMS_CATEGORY_KEYWORDS = {
+    "โต๊ะเครื่องแป้ง": ["DRESSING TABLE", "DRESSER", "VANITY TABLE", "VANITY", "MAKEUP TABLE", "MAKE UP TABLE"],
+    "ตู้ไม้": ["WOODEN CUPBOARD", "WOOD CUPBOARD", "WOODEN CABINET", "WOOD CABINET", "CUPBOARD", "WARDROBE"],
+    "ตู้วางทีวี": ["TV CABINET", "TV STAND", "TV CONSOLE", "TELEVISION CABINET", "TELEVISION STAND", "TV UNIT"],
+    "ตู้วางข้างเตียง": [
+        "BEDSIDE CABINET", "BEDSIDE CUPBOARD", "BEDSIDE TABLE", "BED SIDE",
+        "NIGHTSTAND", "NIGHT STAND", "NIGHT TABLE",
+    ],
+    "ชั้นวางของ": ["SHELF", "SHELVING", "SHELVES", "STORAGE RACK", "RACK", "STORAGE UNIT"],
+    "รางผ้าม่าน": ["CURTAIN RAIL", "CURTAIN ROD", "CURTAIN TRACK", "CURTAIN POLE"],
 }
+
+
+def match_customs_category(name_en: str) -> str:
+    """จับคู่ชื่อสินค้าภาษาอังกฤษจากใบขน กับหมวดหมู่ภาษาไทยที่ระบบรู้จัก
+    ใช้การเทียบคำสำคัญแบบยืดหยุ่น (substring) แทนการต้องตรงกันเป๊ะทั้งคำ
+    เพื่อให้รองรับชื่อสินค้าที่ไม่เคยเจอมาก่อนได้ดีขึ้น โดยคำที่เจาะจงกว่า (ยาวกว่า) จะถูกพิจารณาก่อนเสมอ
+    กันไม่ให้คำทั่วไป เช่น "CUPBOARD" แย่งจับคู่ก่อนคำเฉพาะเจาะจงกว่าอย่าง "BEDSIDE CUPBOARD"
+    หากจับคู่ไม่ได้เลย จะคืนค่าว่างให้ผู้ใช้เลือกหมวดหมู่เองในตารางที่แก้ไขได้
+    """
+    if not name_en:
+        return ""
+    name_upper = name_en.upper().strip()
+
+    all_keywords = [
+        (kw, th_name) for th_name, keywords in CUSTOMS_CATEGORY_KEYWORDS.items() for kw in keywords
+    ]
+    all_keywords.sort(key=lambda pair: len(pair[0]), reverse=True)
+
+    for kw, th_name in all_keywords:
+        if kw in name_upper or name_upper in kw:
+            return th_name
+    return ""
+
 
 
 def clean_text(text: str) -> str:
@@ -121,6 +148,17 @@ def _parse_customs_number(raw: str):
         return None
 
 
+def _is_item_start_line(line: str) -> bool:
+    """เช็คว่าบรรทัดนี้เป็นจุดเริ่มต้นของรายการสินค้าใหม่หรือไม่ (มี USD + ตัวเลขอย่างน้อย 3 ค่า ไม่ใช่หมายเหตุแปลงสกุลเงิน)"""
+    if "USD" not in line or "F=" in line or "I=" in line or "THB" in line:
+        return False
+    nums_raw = re.findall(r"[\d][\d,.]*\d", line)
+    if len(nums_raw) < 3:
+        return False
+    value = _parse_customs_number(nums_raw[-1])
+    return bool(value and value >= 1000)
+
+
 def parse_customs_items(text: str) -> list[dict]:
     """แยกแต่ละรายการสินค้าที่นำเข้าจากข้อความใบขน (OCR) ออกเป็น
     ชื่อสินค้า (อังกฤษ), จำนวน (C62), มูลค่า (ฐานภาษีมูลค่าเพิ่ม), และ VAT ของรายการนั้นๆ
@@ -130,49 +168,59 @@ def parse_customs_items(text: str) -> list[dict]:
 
     for i, line in enumerate(lines):
         # แถวแรกของแต่ละรายการ มีรูปแบบ "USD <ราคาต่างประเทศ> 0.00 0.00 0.00 <มูลค่าบาท>"
-        # ตัดแถวย่อยที่เป็นหมายเหตุแปลงสกุลเงิน (มี F= / I= / THB) ออก เพราะไม่ใช่แถวหลักของรายการ
-        if "USD" not in line or "F=" in line or "I=" in line or "THB" in line:
+        if not _is_item_start_line(line):
             continue
 
         nums_raw = re.findall(r"[\d][\d,.]*\d", line)
-        if len(nums_raw) < 3:
-            continue
-
         value = _parse_customs_number(nums_raw[-1])
-        if not value or value < 1000:
-            continue
 
         vat = None
         qty = None
         name = None
-        window_end = min(i + 14, len(lines))
+
+        # หาไปจนกว่าจะเจอรายการถัดไป (จุดเริ่มต้นบรรทัดใหม่) หรือสูงสุด 45 บรรทัด กัน OCR วางเนื้อหาห่างกันมาก
+        window_end = len(lines)
+        for j in range(i + 1, min(i + 46, len(lines))):
+            if _is_item_start_line(lines[j]):
+                window_end = j
+                break
+        else:
+            window_end = min(i + 46, len(lines))
 
         for j in range(i, window_end):
             l2 = lines[j]
 
             # หายอด VAT: อยู่ในแถวที่มีค่ามูลค่าเดิมปรากฏซ้ำอีกครั้ง (คอลัมน์ท้ายแถวนั้นคือ VAT)
+            # กรองค่าที่ไม่สมเหตุสมผลออก (VAT ควรอยู่ราว 3-15% ของมูลค่า ไม่ใช่เลขเล็กจิ๋วหรือใหญ่เกินจากสัญญาณรบกวน OCR)
             if vat is None and j != i:
                 n2 = re.findall(r"[\d][\d,.]*\d", l2)
                 parsed2 = [p for p in (_parse_customs_number(x) for x in n2) if p is not None]
                 if len(parsed2) >= 2 and any(abs(p - value) < 0.5 for p in parsed2):
-                    vat = parsed2[-1]
+                    candidate = parsed2[-1]
+                    if value * 0.02 <= candidate <= value * 0.2:
+                        vat = candidate
 
             # หาจำนวนสินค้า (หน่วยนับ C62)
             if qty is None:
                 m = re.search(r"([\d][\d,.]*\d)\s*C62", l2)
                 if m:
                     q = _parse_customs_number(m.group(1))
-                    if q and q < 5000:
+                    if q and q < 50000:
                         qty = q
 
             # หาชื่อสินค้าภาษาอังกฤษ (บรรทัดตัวพิมพ์ใหญ่ล้วน หรือท้ายบรรทัดที่ปนกับหมายเหตุอื่น)
+            # ต้องยาวอย่างน้อย 5 ตัวอักษร กันไม่ให้จับรหัสสั้นๆ เช่น ACN, CN, PE ที่ไม่ใช่ชื่อสินค้า
             if name is None:
                 l3 = l2.strip()
-                if re.fullmatch(r"[A-Z][A-Z\s]{2,30}", l3) and l3 not in ("NO BRAND", "CN", "ORIGIN CRITERIA"):
+                if (
+                    len(l3) >= 5
+                    and re.fullmatch(r"[A-Z][A-Z\s]{4,30}", l3)
+                    and l3 not in ("NO BRAND", "ORIGIN CRITERIA")
+                ):
                     name = l3
                 else:
                     tail = re.search(r"([A-Z]{3,}(?:\s[A-Z]{2,})*)\s*$", l3)
-                    if tail and tail.group(1) not in ("NO BRAND", "CN") and len(tail.group(1)) > 4:
+                    if tail and tail.group(1) not in ("NO BRAND", "CN", "ACN") and len(tail.group(1)) > 4:
                         name = tail.group(1)
 
             if vat is not None and qty is not None and name is not None:
@@ -182,7 +230,10 @@ def parse_customs_items(text: str) -> list[dict]:
             # ตัดตัวอักษรเดี่ยวหลุดหน้าชื่อ ที่มักเป็น noise จาก OCR (เช่น "E TV CABINET" -> "TV CABINET")
             name = re.sub(r"^[A-Z]\s+(?=[A-Z]{2,})", "", name).strip()
 
-        if vat and qty and name:
+        # ต้องมีชื่อ + จำนวนแน่นอนถึงจะนับเป็นรายการได้ (VAT หาไม่เจอไม่เป็นไร ใช้ค่าประมาณแทน เพราะไม่ได้ใช้ในการคำนวณจริง แค่โชว์อ้างอิง)
+        if qty and name:
+            if vat is None:
+                vat = round(value * VAT_RATE, 2)
             items.append({"name_en": name, "quantity": qty, "value": value, "vat": vat})
 
     return items
@@ -686,14 +737,18 @@ if customs_pdf is not None:
     st.markdown(f"**รายการสินค้าที่อ่านได้จากใบขน** (พบอัตโนมัติ {len(auto_customs_items)} รายการ — ถ้าอ่านไม่ครบ/ผิด แก้ไขหรือเพิ่มแถวเองในตารางด้านล่างได้เลย)")
 
     customs_items_df_source = pd.DataFrame(auto_customs_items) if auto_customs_items else pd.DataFrame(
-        columns=["name_en", "quantity", "value", "vat"]
+        [{"name_en": "", "quantity": None, "value": None, "vat": None} for _ in range(3)]
     )
     if not customs_items_df_source.empty:
-        customs_items_df_source["หมวดหมู่ (ไทย)"] = customs_items_df_source["name_en"].apply(
-            lambda n: CUSTOMS_NAME_TO_TH.get(n, "")
-        )
+        customs_items_df_source["หมวดหมู่ (ไทย)"] = customs_items_df_source["name_en"].apply(match_customs_category)
     else:
         customs_items_df_source["หมวดหมู่ (ไทย)"] = []
+
+    if not auto_customs_items:
+        st.warning(
+            "⚠️ ระบบอ่านรายการสินค้าจากใบขนอัตโนมัติไม่เจอเลย "
+            "กรุณาพิมพ์ชื่อสินค้า/จำนวน/มูลค่า/VAT ที่เห็นในใบขนเองในตารางด้านล่าง (เพิ่มแถวได้ด้วยปุ่ม + ท้ายตาราง)"
+        )
 
     customs_items_df_source = customs_items_df_source.rename(
         columns={"name_en": "ชื่อสินค้า (อังกฤษ)", "quantity": "จำนวน", "value": "มูลค่า (ฐาน VAT)", "vat": "VAT"}
@@ -704,7 +759,9 @@ if customs_pdf is not None:
         use_container_width=True,
         num_rows="dynamic",
         column_config={
-            "หมวดหมู่ (ไทย)": st.column_config.SelectboxColumn(options=sorted(set(CUSTOMS_NAME_TO_TH.values()))),
+            "หมวดหมู่ (ไทย)": st.column_config.SelectboxColumn(
+                options=sorted(set(DEFAULT_PRODUCT_NAMES.values()) | set(CUSTOMS_CATEGORY_KEYWORDS.keys()))
+            ),
             "จำนวน": st.column_config.NumberColumn(format="%.2f", min_value=0.0),
             "มูลค่า (ฐาน VAT)": st.column_config.NumberColumn(format="%.2f", min_value=0.0),
             "VAT": st.column_config.NumberColumn(format="%.2f", min_value=0.0),
@@ -712,10 +769,21 @@ if customs_pdf is not None:
         key="customs_items_editor",
     )
 
+    # เตือนถ้ามีรายการที่ยังไม่ได้กำหนดหมวดหมู่ (จับคู่อัตโนมัติไม่ได้ ต้องเลือกเอง)
+    unassigned_rows = edited_customs_items_df[
+        edited_customs_items_df["หมวดหมู่ (ไทย)"].isna() | (edited_customs_items_df["หมวดหมู่ (ไทย)"] == "")
+    ]
+    if not unassigned_rows.empty:
+        st.warning(
+            "⚠️ ยังมีรายการที่ระบบจับคู่หมวดหมู่ไม่ได้ (ชื่อสินค้าในใบขนอาจเป็นคำใหม่ที่ยังไม่เคยเจอ) "
+            "กรุณาเลือกหมวดหมู่เองในคอลัมน์ \"หมวดหมู่ (ไทย)\" ด้านบน มิฉะนั้นรายการนั้นจะไม่ถูกนำไปคำนวณ:\n\n"
+            + "\n".join(f"- {r['ชื่อสินค้า (อังกฤษ)']}" for _, r in unassigned_rows.iterrows())
+        )
+
     # แปลงกลับเป็นรูปแบบที่ใช้ในการคำนวณ โดยยึด "หมวดหมู่ (ไทย)" ที่แก้ไขแล้วเป็นหลัก
     customs_items = []
     for _, r in edited_customs_items_df.iterrows():
-        th_name = r.get("หมวดหมู่ (ไทย)") or CUSTOMS_NAME_TO_TH.get(r.get("ชื่อสินค้า (อังกฤษ)", ""), "")
+        th_name = r.get("หมวดหมู่ (ไทย)") or match_customs_category(r.get("ชื่อสินค้า (อังกฤษ)", ""))
         if not th_name or pd.isna(r.get("จำนวน")) or float(r.get("จำนวน", 0)) <= 0:
             continue
         customs_items.append({
@@ -845,7 +913,7 @@ customs_base_vat = st.session_state.get("target_base_vat", 0.0)
 # สร้างตารางค้นหา: ชื่อหมวดไทย -> รายการในใบขน (รวมกรณีมีหลายรายการชื่อเดียวกัน)
 customs_by_th_name: dict[str, dict] = {}
 for it in customs_items:
-    th_name = it.get("name_th_override") or CUSTOMS_NAME_TO_TH.get(it["name_en"])
+    th_name = it.get("name_th_override") or match_customs_category(it["name_en"])
     if not th_name:
         continue
     agg = customs_by_th_name.setdefault(th_name, {"quantity": 0.0, "value": 0.0})
