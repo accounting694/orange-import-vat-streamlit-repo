@@ -6,9 +6,10 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
-
 APP_TITLE = "Orange Import to PEAK"
 VAT_RATE = 0.07
+
+st.set_page_config(page_title=APP_TITLE, page_icon="🗂️", layout="wide")
 
 PEAK_COLUMNS = [
     "ลำดับที่*",
@@ -457,44 +458,174 @@ def to_excel_bytes(sheets: dict[str, pd.DataFrame]) -> bytes:
 st.markdown(
     """
     <style>
+    @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap');
+
+    :root {
+        --ot-navy: #1B2A4A;
+        --ot-navy-dark: #10192E;
+        --ot-navy-tint: #EEF1F6;
+        --ot-gold: #A9812E;
+        --ot-gold-tint: #F7F1E2;
+        --ot-ink: #202634;
+        --ot-slate: #5B6273;
+        --ot-paper: #FFFFFF;
+        --ot-bg: #F4F5F7;
+        --ot-line: #DCE0E8;
+    }
+
     html, body, [class*="css"] {
-        font-family: 'THSarabunPSK', 'Sarabun', sans-serif;
+        font-family: 'Sarabun', 'THSarabunPSK', sans-serif;
     }
 
     .stApp {
-        background-color: #F8FAFC;
+        background-color: var(--ot-bg);
     }
 
+    h1, h2, h3, .ot-step-label {
+        font-family: 'Sarabun', sans-serif !important;
+        font-weight: 700 !important;
+        color: var(--ot-ink) !important;
+        letter-spacing: 0.2px;
+    }
+
+    /* แถบขั้นตอน */
+    .ot-step {
+        display: flex;
+        align-items: center;
+        gap: 0.7rem;
+        margin: 1.7rem 0 0.5rem 0;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid var(--ot-line);
+    }
+    .ot-step-num {
+        flex-shrink: 0;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        border: 1.5px solid var(--ot-navy);
+        color: var(--ot-navy);
+        background: var(--ot-paper);
+        font-weight: 700;
+        font-size: 15px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .ot-step-label {
+        font-size: 20px;
+        font-weight: 700 !important;
+    }
+    .ot-step-sub {
+        font-size: 13.5px;
+        color: var(--ot-slate);
+        margin-left: 42px;
+        margin-top: -2px;
+    }
+
+    /* Sidebar */
     section[data-testid="stSidebar"] {
-        background-color: #374151;
+        background-color: var(--ot-navy-dark);
+    }
+    section[data-testid="stSidebar"] * {
+        color: #E7E9EE !important;
+    }
+    section[data-testid="stSidebar"] input, section[data-testid="stSidebar"] [data-baseweb="input"] {
+        color: var(--ot-ink) !important;
     }
 
-    section[data-testid="stSidebar"] * {
-        color: white !important;
+    /* ปุ่ม */
+    .stButton > button, .stDownloadButton > button {
+        background: var(--ot-navy);
+        color: white;
+        border: none;
+        border-radius: 6px;
+        font-weight: 600;
+        padding: 0.5rem 1.25rem;
+        transition: background 0.15s ease;
+    }
+    .stButton > button:hover, .stDownloadButton > button:hover {
+        background: var(--ot-navy-dark);
+        color: white;
+    }
+
+    /* Metric */
+    div[data-testid="stMetric"] {
+        background: var(--ot-paper);
+        border: 1px solid var(--ot-line);
+        border-top: 3px solid var(--ot-gold);
+        border-radius: 6px;
+        padding: 0.9rem 1rem;
+    }
+    div[data-testid="stMetricLabel"] {
+        color: var(--ot-slate);
+    }
+    div[data-testid="stMetricValue"] {
+        font-family: 'Sarabun', sans-serif;
+        font-weight: 700;
+        color: var(--ot-navy);
+    }
+
+    /* File uploader */
+    [data-testid="stFileUploaderDropzone"] {
+        background: var(--ot-paper);
+        border: 1.5px dashed #B7BECC;
+        border-radius: 6px;
+    }
+
+    /* Expander / dataframe */
+    div[data-testid="stExpander"], div[data-testid="stDataFrame"] {
+        border-radius: 6px;
+        overflow: hidden;
+        border: 1px solid var(--ot-line);
+    }
+
+    hr {
+        border-top: 1px solid var(--ot-line);
     }
     </style>
     """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
-st.set_page_config(page_title=APP_TITLE, page_icon="🧾", layout="wide")
-           
-st.markdown("""
-<div style="
-    background: linear-gradient(135deg,#1F2937,#374151);
-    padding: 1.5rem;
-    border-radius: 20px;
-    margin-bottom: 1.5rem;
-    color: white;
-">
-    <div style="font-size:32px;font-weight:700;">🧾 ORANGE IMPORT VAT</div>
-    <div style="font-size:18px;opacity:0.9;">
-        ระบบตรวจสอบ VAT นำเข้า • Smart Cost Allocation • Export PEAK
+st.markdown(
+    """
+    <div style="
+        background: var(--ot-navy, #1B2A4A);
+        padding: 1.5rem 1.8rem;
+        border-radius: 8px;
+        border-bottom: 4px solid #A9812E;
+        margin-bottom: 1.3rem;
+        color: white;
+    ">
+        <div style="font-family:'Sarabun',sans-serif;font-size:26px;font-weight:700;letter-spacing:0.3px;">
+            Orange Import VAT
+        </div>
+        <div style="font-size:14.5px;opacity:0.85;margin-top:4px;letter-spacing:0.2px;">
+            ระบบตรวจสอบ VAT นำเข้า &nbsp;·&nbsp; เฉลี่ยราคาต่อชิ้นให้ตรงใบขน &nbsp;·&nbsp; นำเข้าข้อมูล PEAK
+        </div>
     </div>
-</div>
-""", unsafe_allow_html=True)
+    """,
+    unsafe_allow_html=True,
+)
+
+
+def step_header(number: str, title: str, subtitle: str = "") -> None:
+    """หัวข้อขั้นตอนแบบมีเลขกำกับ ให้เห็นลำดับงานชัดเจน"""
+    sub_html = f'<div class="ot-step-sub">{subtitle}</div>' if subtitle else ""
+    st.markdown(
+        f"""
+        <div class="ot-step">
+            <div class="ot-step-num">{number}</div>
+            <div class="ot-step-label">{title}</div>
+        </div>
+        {sub_html}
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 with st.sidebar:
-    st.header("ข้อมูลเอกสาร PEAK")
+    st.header("⚙️ ข้อมูลเอกสาร PEAK")
     document_date = st.date_input("วันที่เอกสาร", value=date(2026, 5, 28))
     reference_no = st.text_input("อ้างอิงถึง", value="YLZ-8020")
     partner_code = st.text_input("ผู้รับเงิน/คู่ค้า", value="C00129")
@@ -506,7 +637,7 @@ with st.sidebar:
     vat_rate = st.number_input("อัตราภาษี", min_value=0.0, max_value=1.0, value=VAT_RATE, step=0.01, format="%.2f")
     default_container = st.text_input("ตู้เริ่มต้น ถ้าอ่านไม่ได้", value="")
 st.markdown("---")
-st.header("📄 นำเข้าใบขน PDF")
+step_header("1", "อัปโหลดใบขน", "ระบบจะอ่านยอด VAT และรายการสินค้าที่นำเข้าให้อัตโนมัติ")
 
 customs_pdf = st.file_uploader(
     "เลือกไฟล์ใบขน PDF",
@@ -617,6 +748,9 @@ if customs_pdf is not None:
     # เก็บไว้ใช้ตอน Export PEAK
     st.session_state["target_base_vat"] = base_vat
     st.session_state["vat_amount"] = vat_amount
+
+step_header("2", "อัปโหลดใบรับสินค้า", "แตกรายการสินค้าอัตโนมัติ แล้วจับคู่ราคากับใบขนตามหมวดหมู่")
+
 uploaded_pdfs = st.file_uploader(
     "อัปโหลด PDF ใบรับสินค้า เช่น 1386.pdf, 1388.pdf",
     type=["pdf"],
@@ -650,7 +784,8 @@ else:
     items = apply_product_master(items, product_master)
     items_df = pd.DataFrame(items)
 
-st.subheader("ตรวจรายการสินค้า")
+st.markdown('<div style="height:0.4rem"></div>', unsafe_allow_html=True)
+st.subheader("📝 ตรวจรายการสินค้า")
 edited_items = st.data_editor(
     items_df,
     use_container_width=True,
@@ -761,6 +896,7 @@ if category_check_rows:
     st.subheader("ตรวจสอบจำนวนสินค้าต่อหมวด (ใบรับ vs ใบขน)")
     st.dataframe(pd.DataFrame(category_check_rows), use_container_width=True)
 
+step_header("3", "ตรวจสอบและส่งออกไฟล์", "เทียบยอดกับใบขนแล้วดาวน์โหลดไฟล์นำเข้า PEAK")
 st.subheader("Preview ไฟล์นำเข้า PEAK")
 st.dataframe(peak_df, use_container_width=True)
 
