@@ -117,7 +117,9 @@ def product_name(product_code: str) -> str:
     for prefix, name in DEFAULT_PRODUCT_NAMES.items():
         if family.startswith(prefix):
             return name
-    return "สินค้า"
+    # รหัสสินค้าที่ยังไม่รู้จัก: ใช้ prefix เป็นชื่อหมวดชั่วคราว (กันไม่ให้สินค้าต่างชนิดกันถูกจับปนเป็นหมวดเดียว
+    # เหมือนตอนใช้คำว่า "สินค้า" เฉยๆ) ผู้ใช้แก้ชื่อให้ตรงในตารางได้เอง
+    return family or "สินค้า"
 
 
 def default_price(product_code: str) -> float:
@@ -159,10 +161,79 @@ def _is_item_start_line(line: str) -> bool:
     return bool(value and value >= 1000)
 
 
-def parse_customs_items(text: str) -> list[dict]:
-    """แยกแต่ละรายการสินค้าที่นำเข้าจากข้อความใบขน (OCR) ออกเป็น
-    ชื่อสินค้า (อังกฤษ), จำนวน (C62), มูลค่า (ฐานภาษีมูลค่าเพิ่ม), และ VAT ของรายการนั้นๆ
+def parse_customs_items_by_keyword(text: str) -> list[dict]:
+    """วิธีที่ 1 (แม่นยำสุด): ค้นหาด้วยคำภาษาไทยตรงๆ ในเอกสาร ("ฐานภาษีมูลค่าเพิ่ม", "ปริมาณ" ฯลฯ)
+    ใช้ได้ผลดีเฉพาะกับ PDF ที่มีชั้นข้อความจริงในไฟล์ (ไม่ใช่ไฟล์สแกน) เพราะข้อความไทยจะอ่านได้ถูกต้องสมบูรณ์
+    ต่างจากไฟล์สแกนที่ต้องผ่าน OCR แล้วภาษาไทยมักอ่านผิดเพี้ยน
     """
+    base_positions = [m.start() for m in re.finditer(r"ฐานภาษีมูลค่าเพิ่ม", text)]
+    if not base_positions:
+        return []
+
+    items = []
+    for idx, pos in enumerate(base_positions):
+        block_end = base_positions[idx + 1] if idx + 1 < len(base_positions) else len(text)
+        block = text[pos:block_end]
+
+        value_match = re.search(r"ฐานภาษีมูลค่าเพิ่ม\s*\n?\s*([\d,]+\.\d{2})", text[pos:pos + 60])
+        value = _parse_customs_number(value_match.group(1)) if value_match else None
+        if not value:
+            continue
+
+        vat_match = re.search(r"(?<!ฐาน)ภาษีมูลค่าเพิ่ม\s*\n?\s*([\d,]+\.\d{2})", block)
+        vat = _parse_customs_number(vat_match.group(1)) if vat_match else None
+
+        qty_match = re.search(r"ปริมาณ\s*\n?\s*([\d,]+\.\d+)\s*C62", block)
+        qty = _parse_customs_number(qty_match.group(1)) if qty_match else None
+        if not qty:
+            continue
+
+        # หาชื่อสินค้า: อังกฤษเป็นบรรทัดตัวพิมพ์ใหญ่ล้วนหลัง "Origin Criteria",
+        # ชื่อไทยมักตามหลังในบรรทัดถัดๆ ไป (อ่านได้ตรงๆ เพราะเป็นข้อความจริงในไฟล์)
+        name_en = None
+        name_th = None
+        origin_pos = block.find("Origin Criteria")
+        if origin_pos != -1:
+            after = block[origin_pos:origin_pos + 400]
+            lines = [ln.strip() for ln in after.split("\n") if ln.strip()]
+            for li, ln in enumerate(lines):
+                if re.fullmatch(r"[A-Z][A-Z0-9\s\-]{3,40}", ln) and "ORIGIN" not in ln and "CRITERIA" not in ln:
+                    name_en = ln
+                    for ln2 in lines[li + 1:li + 6]:
+                        if (
+                            re.search(r"[\u0E00-\u0E7F]", ln2)
+                            and len(ln2) < 50
+                            and not re.search(r"\d", ln2)
+                            and "เจ้าหน้าที่" not in ln2
+                        ):
+                            name_th = ln2
+                            break
+                    break
+
+        if name_en or name_th:
+            items.append({
+                "name_en": name_en or name_th,
+                "name_th_direct": name_th,
+                "quantity": qty,
+                "value": value,
+                "vat": vat if vat else round(value * VAT_RATE, 2),
+            })
+
+    return items
+
+
+def parse_customs_items(text: str) -> list[dict]:
+    """แยกแต่ละรายการสินค้าที่นำเข้าจากข้อความใบขน ออกเป็น
+    ชื่อสินค้า (อังกฤษ/ไทย), จำนวน (C62), มูลค่า (ฐานภาษีมูลค่าเพิ่ม), และ VAT ของรายการนั้นๆ
+
+    ลองวิธีอ่านคำภาษาไทยตรงๆ ก่อน (แม่นยำสุด ใช้ได้กับ PDF ที่มีชั้นข้อความจริง)
+    ถ้าไม่เจอเลย (เช่น เป็นไฟล์สแกนที่ OCR ภาษาไทยอ่านไม่ออก) จะ fallback ไปใช้วิธีเดิม
+    ที่อาศัยตัวเลข + ชื่อสินค้าภาษาอังกฤษแทน
+    """
+    keyword_items = parse_customs_items_by_keyword(text)
+    if keyword_items:
+        return keyword_items
+
     lines = text.split("\n")
     items = []
 
@@ -241,10 +312,18 @@ def parse_customs_items(text: str) -> list[dict]:
 
 def extract_vat_from_header(text: str) -> float:
     """หายอด VAT จากตารางสรุปด้านบนของใบขน (อากรขาเข้า/ภาษีสรรพสามิต/.../ภาษีมูลค่าเพิ่ม/รวมทั้งสิ้น)
-    โดยหาก่อนถึงรายการสินค้ารายการแรก เพราะแถวอื่นในตารางนี้เป็น 0.00 หมด
-    เหลือแค่แถว "ภาษีมูลค่าเพิ่ม" กับ "รวมทั้งสิ้น" ที่มีค่าเท่ากัน (ไม่มีอากรขาเข้า/สรรพสามิตอื่น)
-    วิธีนี้ไม่พึ่งพาการอ่านตัวอักษรไทยจาก OCR เลย (ซึ่งมักอ่านผิดเพี้ยนกับ PDF สแกน)
+
+    วิธีที่ 1 (แม่นยำสุด): หาคำว่า "รวมทั้งสิ้น" ตรงๆ แล้วอ่านตัวเลขที่ตามมา ใช้ได้ผลดีเมื่อ PDF มีชั้นข้อความจริง
+    วิธีที่ 2 (fallback): หาก่อนถึงรายการสินค้ารายการแรก เพราะแถวอื่นในตารางนี้เป็น 0.00 หมด
+    เหลือแค่แถว "ภาษีมูลค่าเพิ่ม" กับ "รวมทั้งสิ้น" ที่มีค่าเท่ากัน ใช้เมื่อวิธีที่ 1 หาไม่เจอ
+    (เช่น เป็นไฟล์สแกนที่ OCR ภาษาไทยอ่านไม่ออก)
     """
+    direct_match = re.search(r"รวมทั้งสิ้น\s*\n?\s*([\d,]+\.\d{2})", text)
+    if direct_match:
+        value = _parse_customs_number(direct_match.group(1))
+        if value and value > 0:
+            return value
+
     # ตัดให้เหลือแค่ส่วนหัวก่อนถึงรายการสินค้ารายการแรก (บรรทัดที่มี USD ตามด้วยตัวเลข 3 ค่าขึ้นไป)
     lines = text.split("\n")
     header_end = len(lines)
@@ -740,7 +819,13 @@ if customs_pdf is not None:
         [{"name_en": "", "quantity": None, "value": None, "vat": None} for _ in range(3)]
     )
     if not customs_items_df_source.empty:
-        customs_items_df_source["หมวดหมู่ (ไทย)"] = customs_items_df_source["name_en"].apply(match_customs_category)
+        def _pick_th_name(row):
+            direct = row.get("name_th_direct")
+            if isinstance(direct, str) and direct.strip():
+                return direct
+            return match_customs_category(row.get("name_en", ""))
+
+        customs_items_df_source["หมวดหมู่ (ไทย)"] = customs_items_df_source.apply(_pick_th_name, axis=1)
     else:
         customs_items_df_source["หมวดหมู่ (ไทย)"] = []
 
@@ -754,14 +839,14 @@ if customs_pdf is not None:
         columns={"name_en": "ชื่อสินค้า (อังกฤษ)", "quantity": "จำนวน", "value": "มูลค่า (ฐาน VAT)", "vat": "VAT"}
     )[["หมวดหมู่ (ไทย)", "ชื่อสินค้า (อังกฤษ)", "จำนวน", "มูลค่า (ฐาน VAT)", "VAT"]]
 
+    st.caption("💡 ช่อง \"หมวดหมู่ (ไทย)\" พิมพ์ชื่อใหม่ได้อิสระ ไม่จำกัดแค่หมวดเดิมที่มีอยู่ — ต้องสะกดให้ตรงกับช่อง \"ชื่อสินค้า\" ในตารางใบรับสินค้าด้านล่างเป๊ะๆ ถึงจะจับคู่คำนวณให้ได้")
+
     edited_customs_items_df = st.data_editor(
         customs_items_df_source,
         use_container_width=True,
         num_rows="dynamic",
         column_config={
-            "หมวดหมู่ (ไทย)": st.column_config.SelectboxColumn(
-                options=sorted(set(DEFAULT_PRODUCT_NAMES.values()) | set(CUSTOMS_CATEGORY_KEYWORDS.keys()))
-            ),
+            "หมวดหมู่ (ไทย)": st.column_config.TextColumn(),
             "จำนวน": st.column_config.NumberColumn(format="%.2f", min_value=0.0),
             "มูลค่า (ฐาน VAT)": st.column_config.NumberColumn(format="%.2f", min_value=0.0),
             "VAT": st.column_config.NumberColumn(format="%.2f", min_value=0.0),
