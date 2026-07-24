@@ -474,7 +474,7 @@ st.markdown(
     }
 
     html, body, [class*="css"] {
-        font-family: 'Sarabun', 'THSarabunPSK', sans-serif;
+        font-family: 'TH Sarabun New', 'THSarabunPSK', 'Sarabun', sans-serif;
     }
 
     .stApp {
@@ -482,7 +482,7 @@ st.markdown(
     }
 
     h1, h2, h3, .ot-step-label {
-        font-family: 'Sarabun', sans-serif !important;
+        font-family: 'TH Sarabun New', 'THSarabunPSK', 'Sarabun', sans-serif !important;
         font-weight: 700 !important;
         color: var(--ot-ink) !important;
         letter-spacing: 0.2px;
@@ -533,19 +533,48 @@ st.markdown(
         color: var(--ot-ink) !important;
     }
 
-    /* ปุ่ม */
-    .stButton > button, .stDownloadButton > button {
-        background: var(--ot-navy);
+    /* ปุ่มทั่วไป (อัปโหลด/คำนวณ ฯลฯ) — น้ำเงินไล่เฉด */
+    .stButton > button {
+        background: linear-gradient(135deg, #24365E 0%, var(--ot-navy) 55%, #2E4570 100%);
         color: white;
         border: none;
-        border-radius: 6px;
+        border-radius: 7px;
         font-weight: 600;
-        padding: 0.5rem 1.25rem;
-        transition: background 0.15s ease;
+        padding: 0.55rem 1.3rem;
+        box-shadow: 0 2px 6px rgba(27,42,74,0.25);
+        transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
     }
-    .stButton > button:hover, .stDownloadButton > button:hover {
-        background: var(--ot-navy-dark);
+    .stButton > button:hover {
+        background: linear-gradient(135deg, #2E4570 0%, #24365E 100%);
         color: white;
+        transform: translateY(-1px);
+        box-shadow: 0 5px 14px rgba(27,42,74,0.35);
+    }
+    .stButton > button:active {
+        transform: translateY(0px);
+        box-shadow: 0 2px 4px rgba(27,42,74,0.3);
+    }
+
+    /* ปุ่มดาวน์โหลด — สีทอง ให้เด่นแยกจากปุ่มทั่วไปว่าเป็นจุดจบงาน */
+    .stDownloadButton > button {
+        background: linear-gradient(135deg, #C79A3E 0%, var(--ot-gold) 60%, #8E6A22 100%);
+        color: white;
+        border: none;
+        border-radius: 7px;
+        font-weight: 700;
+        padding: 0.55rem 1.3rem;
+        box-shadow: 0 2px 6px rgba(169,129,46,0.35);
+        transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+    }
+    .stDownloadButton > button:hover {
+        background: linear-gradient(135deg, #D6AA4E 0%, #A9812E 100%);
+        color: white;
+        transform: translateY(-1px);
+        box-shadow: 0 6px 16px rgba(169,129,46,0.45);
+    }
+    .stDownloadButton > button:active {
+        transform: translateY(0px);
+        box-shadow: 0 2px 4px rgba(169,129,46,0.4);
     }
 
     /* Metric */
@@ -560,7 +589,7 @@ st.markdown(
         color: var(--ot-slate);
     }
     div[data-testid="stMetricValue"] {
-        font-family: 'Sarabun', sans-serif;
+        font-family: 'TH Sarabun New', 'THSarabunPSK', 'Sarabun', sans-serif;
         font-weight: 700;
         color: var(--ot-navy);
     }
@@ -597,7 +626,7 @@ st.markdown(
         margin-bottom: 1.3rem;
         color: white;
     ">
-        <div style="font-family:'Sarabun',sans-serif;font-size:26px;font-weight:700;letter-spacing:0.3px;">
+        <div style="font-family:'TH Sarabun New','THSarabunPSK','Sarabun',sans-serif;font-size:26px;font-weight:700;letter-spacing:0.3px;">
             Orange Import VAT
         </div>
         <div style="font-size:14.5px;opacity:0.85;margin-top:4px;letter-spacing:0.2px;">
